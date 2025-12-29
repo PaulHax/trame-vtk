@@ -1042,6 +1042,22 @@ class VtkLocalView(HtmlElement):
             opts,
         )
 
+    def trigger_render(self, **kwargs):
+        """Trigger a render (useful for external context mode)."""
+        self.server.js_call(self.__ref, "triggerRender")
+
+    def set_size(self, width, height, **kwargs):
+        """Set the render size (useful for external context mode)."""
+        self.server.js_call(self.__ref, "setSize", width, height)
+
+    def save_gl_state(self, **kwargs):
+        """Save WebGL state before rendering (for external context mode)."""
+        self.server.js_call(self.__ref, "saveGLState")
+
+    def restore_gl_state(self, **kwargs):
+        """Restore WebGL state after rendering (for external context mode)."""
+        self.server.js_call(self.__ref, "restoreGLState")
+
     def release_resources(self):
         self._server.controller.on_server_ready.discard(self.update)
         self.__view = None

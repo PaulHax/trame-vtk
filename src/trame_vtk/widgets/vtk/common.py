@@ -433,6 +433,7 @@ class VtkRemoteLocalView(HtmlElement):
             ("box_selection", "boxSelection"),
             ("disable_auto_switch", "disableAutoSwitch"),
             ("picking_modes", "pickingModes"),
+            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             "click",
@@ -878,6 +879,7 @@ class VtkLocalView(HtmlElement):
             ("context_name", "contextName"),
             ("box_selection", "boxSelection"),
             ("picking_modes", "pickingModes"),
+            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             ("on_image_capture", "onImageCapture"),
@@ -1072,6 +1074,7 @@ class VtkView(HtmlElement):
             "interactor_settings",
             "picking_modes",
             "show_cube_axes",
+            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             "hover",

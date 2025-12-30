@@ -1058,6 +1058,17 @@ class VtkLocalView(HtmlElement):
         """Restore WebGL state after rendering (for external context mode)."""
         self.server.js_call(self.__ref, "restoreGLState")
 
+    def prepare_external_render(self, sync_size=True, **kwargs):
+        """Prepare VTK for rendering in external context mode.
+
+        Syncs size from canvas and resets shader cache for context sharing.
+        """
+        self.server.js_call(self.__ref, "prepareExternalRender", {"syncSize": sync_size})
+
+    def reset_gl_state(self, **kwargs):
+        """Reset GL state after VTK render (for external context mode)."""
+        self.server.js_call(self.__ref, "resetGLState")
+
     def release_resources(self):
         self._server.controller.on_server_ready.discard(self.update)
         self.__view = None

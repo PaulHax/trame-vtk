@@ -76,7 +76,8 @@ INIT_SCRIPT_JS = """
     window.initMapLibreVTK = async function() {
         if (initialized) return;
 
-        const vtkView = window.trame?.refs?.['vtkView'];
+        const vtkViewRef = window.trame?.refs?.['vtkView'];
+        const vtkView = vtkViewRef?.$.setupState;
         if (!vtkView || !window.maplibregl) {
             setTimeout(window.initMapLibreVTK, 100);
             return;
@@ -112,25 +113,30 @@ INIT_SCRIPT_JS = """
         const canvas = map.getCanvas();
         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
 
+        // Initialize VTK with MapLibre's WebGL context
         vtkView.initializeWithExternalContext(canvas, gl);
-        vtkView.resetCamera();
 
         let needsResetCamera = true;
 
+        // Route VTK renders through MapLibre's render cycle
+        vtkView.setExternalRenderCallback(() => {
+            map.triggerRepaint();
+        });
+
+        // MapLibre render callback - do VTK rendering here
         map.on('render', () => {
             try {
-                vtkView.prepareExternalRender();
+                vtkView.saveGLState();
                 if (needsResetCamera) {
                     vtkView.resetCamera();
                     needsResetCamera = false;
                 }
-                vtkView.triggerRender();
-                vtkView.resetGLState();
+                vtkView.renderNow();
+                vtkView.restoreGLState();
             } catch (e) {
                 console.error('VTK render error:', e);
             }
         });
-
         map.triggerRepaint();
         window.mapLibreMap = map;
         console.log('MapLibre + VTK integration initialized');

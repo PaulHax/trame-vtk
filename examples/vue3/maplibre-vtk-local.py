@@ -2,14 +2,13 @@
 MapLibre + VTK Local View Integration Example
 
 This example demonstrates how to use VtkLocalView with an external WebGL context
-shared with MapLibre GL JS. VTK renders 3D content over the map.
+shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
 """
 
-import asyncio
 from urllib.parse import quote as url_quote
 
 from trame.app import get_server
-from trame.widgets import vuetify3, vtk as vtk_widgets, html
+from trame.widgets import vtk as vtk_widgets, html
 from trame.ui.vuetify3 import SinglePageLayout
 
 from vtkmodules.vtkFiltersSources import vtkConeSource
@@ -28,8 +27,14 @@ server = get_server()
 server.client_type = "vue3"
 state, ctrl = server.state, server.controller
 
-state.trame__title = "MapLibre + VTK Local"
+state.trame__title = "MapLibre + VTK Geo Cones"
 
+# City data - positions will be set client-side using MercatorCoordinate
+CITIES = [
+    {"name": "New York", "color": (1.0, 0.5, 0.0)},
+    {"name": "Chicago", "color": (0.5, 1.0, 0.0)},
+    {"name": "Denver", "color": (0.0, 0.5, 1.0)},
+]
 
 renderer = vtkRenderer()
 renderer.SetBackground(0, 0, 0)
@@ -43,35 +48,21 @@ renderWindowInteractor = vtkRenderWindowInteractor()
 renderWindowInteractor.SetRenderWindow(renderWindow)
 renderWindowInteractor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
-cone_source = vtkConeSource()
-cone_source.SetHeight(1.0)
-cone_source.SetRadius(0.5)
-mapper = vtkPolyDataMapper()
-actor = vtkActor()
-mapper.SetInputConnection(cone_source.GetOutputPort())
-actor.SetMapper(mapper)
-actor.GetProperty().SetColor(1.0, 0.5, 0.0)
-renderer.AddActor(actor)
+# Create cone actors for each city (pointing up in Z direction)
+for city in CITIES:
+    cone_source = vtkConeSource()
+    cone_source.SetHeight(1.0)
+    cone_source.SetRadius(0.5)
+    cone_source.SetDirection(0, 0, 1)  # Point upward
+    mapper = vtkPolyDataMapper()
+    mapper.SetInputConnection(cone_source.GetOutputPort())
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(*city["color"])
+    renderer.AddActor(actor)
+
 renderer.ResetCamera()
 renderWindow.Render()
-
-
-@state.change("resolution")
-def update_cone(resolution=6, **kwargs):
-    cone_source.SetResolution(resolution)
-    ctrl.view_update()
-
-
-async def animate():
-    angle = 0
-    while True:
-        angle = (angle + 0.5) % 360
-        actor.SetOrientation(0, angle, 0)
-        ctrl.view_update()
-        await asyncio.sleep(1 / 60)
-
-
-ctrl.on_server_ready.add(lambda *args, **kwargs: asyncio.create_task(animate()))
 
 
 # MapLibre CDN
@@ -85,6 +76,12 @@ server.enable_module(maplibre_module)
 INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
+
+    const cities = [
+        { name: 'New York', lng: -74.006, lat: 40.7128 },
+        { name: 'Chicago', lng: -87.6298, lat: 41.8781 },
+        { name: 'Denver', lng: -104.9903, lat: 39.7392 },
+    ];
 
     window.initMapLibreVTK = async function() {
         if (initialized) return;
@@ -116,8 +113,8 @@ INIT_SCRIPT_JS = """
                     source: 'osm'
                 }]
             },
-            center: [-74.5, 40],
-            zoom: 9,
+            center: [-90, 40],
+            zoom: 4,
             antialias: true
         });
 
@@ -129,30 +126,65 @@ INIT_SCRIPT_JS = """
         // Initialize VTK with MapLibre's WebGL context
         vtkView.initializeWithExternalContext(canvas, gl);
 
-        let needsResetCamera = true;
-
-        // Route VTK renders through MapLibre's render cycle
-        vtkView.setExternalRenderCallback(() => {
-            map.triggerRepaint();
-        });
-
-        // MapLibre render callback - do VTK rendering here
-        map.on('render', () => {
-            try {
-                vtkView.saveGLState();
-                if (needsResetCamera) {
-                    vtkView.resetCamera();
-                    needsResetCamera = false;
-                }
-                vtkView.renderNow();
-                vtkView.restoreGLState();
-            } catch (e) {
-                console.error('VTK render error:', e);
+        // Get renderer and actors, position them at Mercator coordinates
+        const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
+        const actors = renderer.getActors();
+        cities.forEach((city, i) => {
+            if (i < actors.length) {
+                const mercator = maplibregl.MercatorCoordinate.fromLngLat([city.lng, city.lat], 0);
+                const scale = mercator.meterInMercatorCoordinateUnits() * 100000; // 100km cones
+                actors[i].setPosition(mercator.x, mercator.y, scale * 0.5);
+                actors[i].setScale(scale, scale, scale);
             }
         });
-        map.triggerRepaint();
+        console.log(`Positioned ${actors.length} actors at city locations`);
+
+        // Fit map to show all cities
+        const bounds = new maplibregl.LngLatBounds();
+        cities.forEach(city => bounds.extend([city.lng, city.lat]));
+        map.fitBounds(bounds, { padding: 100 });
+
+        // Use CustomLayerInterface for proper matrix access
+        const vtkLayer = {
+            id: 'vtk-cones',
+            type: 'custom',
+            renderingMode: '3d',
+
+            onAdd: function(map, gl) {
+                console.log('VTK custom layer added');
+            },
+
+            render: function(gl, matrix) {
+                try {
+                    const camera = renderer.getActiveCamera();
+
+                    // Identity view matrix
+                    const identity = new Float64Array([
+                        1, 0, 0, 0,
+                        0, 1, 0, 0,
+                        0, 0, 1, 0,
+                        0, 0, 0, 1
+                    ]);
+                    camera.setViewMatrix(identity);
+
+                    // MapLibre's MVP matrix in column-major format works directly with VTK
+                    camera.setProjectionMatrix(matrix);
+
+                    // Force camera to use the new matrices
+                    camera.modified();
+
+                    vtkView.saveGLState();
+                    vtkView.renderNow();
+                    vtkView.restoreGLState();
+                } catch (e) {
+                    console.error('VTK render error:', e);
+                }
+            }
+        };
+
+        map.addLayer(vtkLayer);
         window.mapLibreMap = map;
-        console.log('MapLibre + VTK integration initialized');
+        console.log('MapLibre + VTK geo cones initialized');
     };
 })();
 """
@@ -163,26 +195,11 @@ server.enable_module({"scripts": [f"data:text/javascript,{url_quote(INIT_SCRIPT_
 
 
 with SinglePageLayout(server) as layout:
-    layout.title.set_text("MapLibre + VTK")
-
-    with layout.toolbar:
-        vuetify3.VSpacer()
-        vuetify3.VSlider(
-            density="compact",
-            v_model=("resolution", 6),
-            min=3,
-            max=60,
-            step=1,
-            hide_details=True,
-            label="Resolution",
-            style="max-width: 300px",
-        )
+    layout.title.set_text("MapLibre + VTK Geo Cones")
 
     with layout.content:
-        with vuetify3.VContainer(
-            fluid=True,
-            classes="pa-0 fill-height",
-            style="position: relative;",
+        with html.Div(
+            style="position: relative; width: 100%; height: 100%;",
         ):
             # MapLibre container - fills the space
             html.Div(
@@ -198,7 +215,6 @@ with SinglePageLayout(server) as layout:
                 on_ready="window.initMapLibreVTK && window.initMapLibreVTK()",
             )
             ctrl.view_update = view.update
-            ctrl.view_reset_camera = view.reset_camera
 
 
 server.start()

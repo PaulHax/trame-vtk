@@ -137,7 +137,6 @@ INIT_SCRIPT_JS = """
                 actors[i].setScale(scale, scale, scale);
             }
         });
-        console.log(`Positioned ${actors.length} actors at city locations`);
 
         // Fit map to show all cities
         const bounds = new maplibregl.LngLatBounds();
@@ -150,41 +149,30 @@ INIT_SCRIPT_JS = """
             type: 'custom',
             renderingMode: '3d',
 
-            onAdd: function(map, gl) {
-                console.log('VTK custom layer added');
-            },
+            onAdd: function(map, gl) {},
 
             render: function(gl, matrix) {
-                try {
-                    const camera = renderer.getActiveCamera();
+                if (!renderer) return;
+                const camera = renderer.getActiveCamera();
 
-                    // Identity view matrix
-                    const identity = new Float64Array([
-                        1, 0, 0, 0,
-                        0, 1, 0, 0,
-                        0, 0, 1, 0,
-                        0, 0, 0, 1
-                    ]);
-                    camera.setViewMatrix(identity);
+                // Identity view matrix
+                const identity = new Float64Array([
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ]);
+                camera.setViewMatrix(identity);
+                camera.setProjectionMatrix(matrix);
+                camera.modified();
 
-                    // MapLibre's MVP matrix in column-major format works directly with VTK
-                    camera.setProjectionMatrix(matrix);
-
-                    // Force camera to use the new matrices
-                    camera.modified();
-
-                    vtkView.saveGLState();
-                    vtkView.renderNow();
-                    vtkView.restoreGLState();
-                } catch (e) {
-                    console.error('VTK render error:', e);
-                }
+                vtkView.saveGLState();
+                vtkView.renderNow();
+                vtkView.restoreGLState();
             }
         };
 
         map.addLayer(vtkLayer);
-        window.mapLibreMap = map;
-        console.log('MapLibre + VTK geo cones initialized');
     };
 })();
 """

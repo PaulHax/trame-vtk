@@ -5,6 +5,7 @@ This example demonstrates how to use VtkLocalView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D content over the map.
 """
 
+import asyncio
 from urllib.parse import quote as url_quote
 
 from trame.app import get_server
@@ -59,6 +60,18 @@ renderWindow.Render()
 def update_cone(resolution=6, **kwargs):
     cone_source.SetResolution(resolution)
     ctrl.view_update()
+
+
+async def animate():
+    angle = 0
+    while True:
+        angle = (angle + 0.5) % 360
+        actor.SetOrientation(0, angle, 0)
+        ctrl.view_update()
+        await asyncio.sleep(1 / 60)
+
+
+ctrl.on_server_ready.add(lambda *args, **kwargs: asyncio.create_task(animate()))
 
 
 # MapLibre CDN
@@ -161,7 +174,7 @@ with SinglePageLayout(server) as layout:
             max=60,
             step=1,
             hide_details=True,
-            label="Cone Resolution",
+            label="Resolution",
             style="max-width: 300px",
         )
 

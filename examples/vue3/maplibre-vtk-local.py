@@ -3,12 +3,16 @@ MapLibre + VTK Shared View Integration Example
 
 This example demonstrates how to use VtkSharedView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
+
+Features bidirectional camera sync between Python and JavaScript:
+- Python can control MapLibre camera via map_camera state
+- JS camera changes sync back to Python and print to console
 """
 
 from urllib.parse import quote as url_quote
 
 from trame.app import get_server
-from trame.widgets import vtk as vtk_widgets, html
+from trame.widgets import vtk as vtk_widgets, html, vuetify3
 from trame.ui.vuetify3 import SinglePageLayout
 
 from vtkmodules.vtkFiltersSources import vtkConeSource
@@ -29,12 +33,57 @@ state, ctrl = server.state, server.controller
 
 state.trame__title = "MapLibre + VTK Geo Cones"
 
-# City data - positions will be set client-side using MercatorCoordinate
+# City data with coordinates
 CITIES = [
-    {"name": "New York", "color": (1.0, 0.5, 0.0)},
-    {"name": "Chicago", "color": (0.5, 1.0, 0.0)},
-    {"name": "Denver", "color": (0.0, 0.5, 1.0)},
+    {"name": "New York", "lng": -74.006, "lat": 40.7128, "color": (1.0, 0.5, 0.0)},
+    {"name": "Chicago", "lng": -87.6298, "lat": 41.8781, "color": (0.5, 1.0, 0.0)},
+    {"name": "Denver", "lng": -104.9903, "lat": 39.7392, "color": (0.0, 0.5, 1.0)},
 ]
+
+# Initial camera state - will be synced bidirectionally
+state.map_camera = {
+    "center": [-90, 40],
+    "zoom": 4,
+    "bearing": 0,
+    "pitch": 0,
+}
+
+# Track if camera update came from Python to avoid feedback loops
+state.camera_update_source = "init"
+
+
+@state.change("map_camera")
+def on_camera_change(map_camera, camera_update_source, **kwargs):
+    if camera_update_source == "js":
+        print(f"Camera updated from JS: center={map_camera['center']}, "
+              f"zoom={map_camera['zoom']:.2f}, bearing={map_camera['bearing']:.1f}, "
+              f"pitch={map_camera['pitch']:.1f}", flush=True)
+
+
+def focus_city(city_name):
+    city = next((c for c in CITIES if c["name"] == city_name), None)
+    if city:
+        with state:
+            state.camera_update_source = "python"
+            state.map_camera = {
+                "center": [city["lng"], city["lat"]],
+                "zoom": 8,
+                "bearing": 0,
+                "pitch": 0,
+            }
+        print(f"Python focusing on {city_name}", flush=True)
+
+
+def fit_all_cities():
+    with state:
+        state.camera_update_source = "python"
+        state.map_camera = {
+            "center": [-90, 40],
+            "zoom": 4,
+            "bearing": 0,
+            "pitch": 0,
+        }
+    print("Python fitting all cities", flush=True)
 
 renderer = vtkRenderer()
 renderer.SetBackground(0, 0, 0)
@@ -76,6 +125,8 @@ server.enable_module(maplibre_module)
 INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
+    let mapInstance = null;
+    let isUpdatingFromPython = false;
 
     const cities = [
         { name: 'New York', lng: -74.006, lat: 40.7128 },
@@ -87,13 +138,21 @@ INIT_SCRIPT_JS = """
         if (initialized) return;
 
         const vtkViewRef = window.trame?.refs?.['vtkView'];
-        const vtkView = vtkViewRef?.$.setupState;
-        if (!vtkView || !window.maplibregl) {
+        // Access component methods - try direct access first, then exposed, then setupState
+        const vtkView = vtkViewRef?.initializeForSharedContext ? vtkViewRef :
+                        vtkViewRef?.$.exposed ? vtkViewRef.$.exposed :
+                        vtkViewRef?.$.setupState;
+        const trame = window.trame;
+
+        if (!vtkView?.initializeForSharedContext || !window.maplibregl || !trame) {
             setTimeout(window.initMapLibreVTK, 100);
             return;
         }
 
         initialized = true;
+
+        // Get initial camera state
+        const initialCamera = trame.state.get('map_camera') || { center: [-90, 40], zoom: 4, bearing: 0, pitch: 0 };
 
         const map = new maplibregl.Map({
             container: 'map-container',
@@ -113,10 +172,14 @@ INIT_SCRIPT_JS = """
                     source: 'osm'
                 }]
             },
-            center: [-90, 40],
-            zoom: 4,
+            center: initialCamera.center,
+            zoom: initialCamera.zoom,
+            bearing: initialCamera.bearing,
+            pitch: initialCamera.pitch,
             antialias: true
         });
+
+        mapInstance = map;
 
         await new Promise(resolve => map.on('load', resolve));
 
@@ -142,6 +205,35 @@ INIT_SCRIPT_JS = """
         const bounds = new maplibregl.LngLatBounds();
         cities.forEach(city => bounds.extend([city.lng, city.lat]));
         map.fitBounds(bounds, { padding: 100 });
+
+        // Watch for camera changes from Python
+        trame.state.watch(['map_camera', 'camera_update_source'], (mapCamera, source) => {
+            if (source === 'python' && mapCamera && !isUpdatingFromPython) {
+                isUpdatingFromPython = true;
+                map.flyTo({
+                    center: mapCamera.center,
+                    zoom: mapCamera.zoom,
+                    bearing: mapCamera.bearing,
+                    pitch: mapCamera.pitch,
+                    duration: 1000
+                });
+                setTimeout(() => { isUpdatingFromPython = false; }, 1100);
+            }
+        });
+
+        // Sync camera back to Python when user moves map
+        map.on('moveend', () => {
+            if (isUpdatingFromPython) return;
+            const center = map.getCenter();
+            const newCamera = {
+                center: [center.lng, center.lat],
+                zoom: map.getZoom(),
+                bearing: map.getBearing(),
+                pitch: map.getPitch()
+            };
+            trame.state.set('camera_update_source', 'js');
+            trame.state.set('map_camera', newCamera);
+        });
 
         // Use CustomLayerInterface for proper matrix access
         const vtkLayer = {
@@ -182,6 +274,14 @@ server.enable_module({"scripts": [f"data:text/javascript,{url_quote(INIT_SCRIPT_
 
 with SinglePageLayout(server) as layout:
     layout.title.set_text("MapLibre + VTK Geo Cones")
+
+    with layout.toolbar:
+        vuetify3.VSpacer()
+        vuetify3.VBtn("New York", click=lambda: focus_city("New York"), classes="mx-1")
+        vuetify3.VBtn("Chicago", click=lambda: focus_city("Chicago"), classes="mx-1")
+        vuetify3.VBtn("Denver", click=lambda: focus_city("Denver"), classes="mx-1")
+        vuetify3.VDivider(vertical=True, classes="mx-2")
+        vuetify3.VBtn("Fit All", click=fit_all_cities, variant="outlined")
 
     with layout.content:
         with html.Div(

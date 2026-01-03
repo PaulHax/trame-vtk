@@ -4,9 +4,9 @@ MapLibre + VTK Shared View Integration Example
 This example demonstrates how to use VtkSharedView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
 
-Features bidirectional camera sync between Python and JavaScript:
-- Python can control MapLibre camera via map_camera state
-- JS camera changes sync back to Python and print to console
+Camera control uses imperative API:
+- Python calls set_map_camera() to control MapLibre camera
+- Python calls get_map_camera() to query current camera position
 """
 
 from urllib.parse import quote as url_quote
@@ -40,51 +40,64 @@ CITIES = [
     {"name": "Denver", "lng": -104.9903, "lat": 39.7392, "color": (0.0, 0.5, 1.0)},
 ]
 
-# Initial camera state - will be synced bidirectionally
-state.map_camera = {
-    "center": [-90, 40],
-    "zoom": 4,
-    "bearing": 0,
-    "pitch": 0,
-}
 
-# Track if camera update came from Python to avoid feedback loops
-state.camera_update_source = "init"
-
-
-@state.change("map_camera")
-def on_camera_change(map_camera, camera_update_source, **kwargs):
-    if camera_update_source == "js":
-        print(f"Camera updated from JS: center={map_camera['center']}, "
-              f"zoom={map_camera['zoom']:.2f}, bearing={map_camera['bearing']:.1f}, "
-              f"pitch={map_camera['pitch']:.1f}", flush=True)
+# Imperative camera control API
+def set_map_camera(center, zoom, bearing=0, pitch=0, animate=True, duration=1000):
+    """Set MapLibre camera position from Python."""
+    server.js_call("mapController", "setCamera", {
+        "center": center,
+        "zoom": zoom,
+        "bearing": bearing,
+        "pitch": pitch,
+        "animate": animate,
+        "duration": duration,
+    })
 
 
+def fit_map_bounds(bounds, padding=100, animate=True):
+    """Fit map to bounds. bounds = [[west, south], [east, north]]"""
+    server.js_call("mapController", "fitBounds", bounds, padding, animate)
+
+
+@server.trigger("map_camera_response")
+def on_map_camera_response(camera):
+    """Called by JS when camera is requested."""
+    print(f"Map camera: center={camera['center']}, zoom={camera['zoom']:.2f}, "
+          f"bearing={camera['bearing']:.1f}, pitch={camera['pitch']:.1f}", flush=True)
+
+
+def get_map_camera():
+    """Request current camera from JS (response via trigger)."""
+    server.js_call("mapController", "getCamera")
+
+
+# Button handlers
 def focus_city(city_name):
     city = next((c for c in CITIES if c["name"] == city_name), None)
     if city:
-        with state:
-            state.camera_update_source = "python"
-            state.map_camera = {
-                "center": [city["lng"], city["lat"]],
-                "zoom": 8,
-                "bearing": 0,
-                "pitch": 0,
-            }
-        print(f"Python focusing on {city_name}", flush=True)
+        set_map_camera(
+            center=[city["lng"], city["lat"]],
+            zoom=8,
+            bearing=0,
+            pitch=0,
+        )
+        print(f"Flying to {city_name}", flush=True)
 
 
 def fit_all_cities():
-    with state:
-        state.camera_update_source = "python"
-        state.map_camera = {
-            "center": [-90, 40],
-            "zoom": 4,
-            "bearing": 0,
-            "pitch": 0,
-        }
-    print("Python fitting all cities", flush=True)
+    bounds = [
+        [min(c["lng"] for c in CITIES), min(c["lat"] for c in CITIES)],
+        [max(c["lng"] for c in CITIES), max(c["lat"] for c in CITIES)],
+    ]
+    fit_map_bounds(bounds, padding=100)
+    print("Fitting all cities", flush=True)
 
+
+def print_camera():
+    get_map_camera()
+
+
+# VTK setup
 renderer = vtkRenderer()
 renderer.SetBackground(0, 0, 0)
 renderer.SetBackgroundAlpha(0)
@@ -97,12 +110,11 @@ renderWindowInteractor = vtkRenderWindowInteractor()
 renderWindowInteractor.SetRenderWindow(renderWindow)
 renderWindowInteractor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
-# Create cone actors for each city (pointing up in Z direction)
 for city in CITIES:
     cone_source = vtkConeSource()
     cone_source.SetHeight(1.0)
     cone_source.SetRadius(0.5)
-    cone_source.SetDirection(0, 0, 1)  # Point upward
+    cone_source.SetDirection(0, 0, 1)
     mapper = vtkPolyDataMapper()
     mapper.SetInputConnection(cone_source.GetOutputPort())
     actor = vtkActor()
@@ -121,12 +133,11 @@ maplibre_module = {
 }
 server.enable_module(maplibre_module)
 
-# Self-executing init script - defines window.initMapLibreVTK
+# JavaScript initialization with imperative map controller
 INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
-    let mapInstance = null;
-    let isUpdatingFromPython = false;
+    let map = null;
 
     const cities = [
         { name: 'New York', lng: -74.006, lat: 40.7128 },
@@ -134,27 +145,52 @@ INIT_SCRIPT_JS = """
         { name: 'Denver', lng: -104.9903, lat: 39.7392 },
     ];
 
+    // Register map controller for Python to call
+    window.trame = window.trame || {};
+    window.trame.refs = window.trame.refs || {};
+    window.trame.refs.mapController = {
+        setCamera({ center, zoom, bearing = 0, pitch = 0, animate = true, duration = 1000 }) {
+            if (!map) return;
+            const options = { center, zoom, bearing, pitch };
+            if (animate) {
+                map.flyTo({ ...options, duration });
+            } else {
+                map.jumpTo(options);
+            }
+        },
+        fitBounds(bounds, padding = 100, animate = true) {
+            if (!map) return;
+            map.fitBounds(bounds, { padding, animate });
+        },
+        getCamera() {
+            if (!map) return;
+            const center = map.getCenter();
+            const camera = {
+                center: [center.lng, center.lat],
+                zoom: map.getZoom(),
+                bearing: map.getBearing(),
+                pitch: map.getPitch()
+            };
+            window.trame.trigger('map_camera_response', [camera]);
+        }
+    };
+
     window.initMapLibreVTK = async function() {
         if (initialized) return;
 
         const vtkViewRef = window.trame?.refs?.['vtkView'];
-        // Access component methods - try direct access first, then exposed, then setupState
         const vtkView = vtkViewRef?.initializeForSharedContext ? vtkViewRef :
                         vtkViewRef?.$.exposed ? vtkViewRef.$.exposed :
                         vtkViewRef?.$.setupState;
-        const trame = window.trame;
 
-        if (!vtkView?.initializeForSharedContext || !window.maplibregl || !trame) {
+        if (!vtkView?.initializeForSharedContext || !window.maplibregl) {
             setTimeout(window.initMapLibreVTK, 100);
             return;
         }
 
         initialized = true;
 
-        // Get initial camera state
-        const initialCamera = trame.state.get('map_camera') || { center: [-90, 40], zoom: 4, bearing: 0, pitch: 0 };
-
-        const map = new maplibregl.Map({
+        map = new maplibregl.Map({
             container: 'map-container',
             style: {
                 version: 8,
@@ -172,82 +208,41 @@ INIT_SCRIPT_JS = """
                     source: 'osm'
                 }]
             },
-            center: initialCamera.center,
-            zoom: initialCamera.zoom,
-            bearing: initialCamera.bearing,
-            pitch: initialCamera.pitch,
+            center: [-90, 40],
+            zoom: 4,
             antialias: true
         });
-
-        mapInstance = map;
 
         await new Promise(resolve => map.on('load', resolve));
 
         const canvas = map.getCanvas();
         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
 
-        // Initialize VTK with MapLibre's WebGL context
         vtkView.initializeForSharedContext(canvas, gl);
 
-        // Get renderer and actors, position them at Mercator coordinates
         const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
         const actors = renderer.getActors();
         cities.forEach((city, i) => {
             if (i < actors.length) {
                 const mercator = maplibregl.MercatorCoordinate.fromLngLat([city.lng, city.lat], 0);
-                const scale = mercator.meterInMercatorCoordinateUnits() * 100000; // 100km cones
+                const scale = mercator.meterInMercatorCoordinateUnits() * 100000;
                 actors[i].setPosition(mercator.x, mercator.y, scale * 0.5);
                 actors[i].setScale(scale, scale, scale);
             }
         });
 
-        // Fit map to show all cities
         const bounds = new maplibregl.LngLatBounds();
         cities.forEach(city => bounds.extend([city.lng, city.lat]));
         map.fitBounds(bounds, { padding: 100 });
 
-        // Watch for camera changes from Python
-        trame.state.watch(['map_camera', 'camera_update_source'], (mapCamera, source) => {
-            if (source === 'python' && mapCamera && !isUpdatingFromPython) {
-                isUpdatingFromPython = true;
-                map.flyTo({
-                    center: mapCamera.center,
-                    zoom: mapCamera.zoom,
-                    bearing: mapCamera.bearing,
-                    pitch: mapCamera.pitch,
-                    duration: 1000
-                });
-                setTimeout(() => { isUpdatingFromPython = false; }, 1100);
-            }
-        });
-
-        // Sync camera back to Python when user moves map
-        map.on('moveend', () => {
-            if (isUpdatingFromPython) return;
-            const center = map.getCenter();
-            const newCamera = {
-                center: [center.lng, center.lat],
-                zoom: map.getZoom(),
-                bearing: map.getBearing(),
-                pitch: map.getPitch()
-            };
-            trame.state.set('camera_update_source', 'js');
-            trame.state.set('map_camera', newCamera);
-        });
-
-        // Use CustomLayerInterface for proper matrix access
         const vtkLayer = {
             id: 'vtk-cones',
             type: 'custom',
             renderingMode: '3d',
-
-            onAdd: function(map, gl) {},
-
+            onAdd: function() {},
             render: function(gl, matrix) {
                 if (!renderer) return;
                 const camera = renderer.getActiveCamera();
-
-                // Identity view matrix
                 const identity = new Float64Array([
                     1, 0, 0, 0,
                     0, 1, 0, 0,
@@ -257,7 +252,6 @@ INIT_SCRIPT_JS = """
                 camera.setViewMatrix(identity);
                 camera.setProjectionMatrix(matrix);
                 camera.modified();
-
                 vtkView.renderShared();
             }
         };
@@ -267,9 +261,7 @@ INIT_SCRIPT_JS = """
 })();
 """
 
-# Load the init script after MapLibre
 server.enable_module({"scripts": [f"data:text/javascript,{url_quote(INIT_SCRIPT_JS)}"]})
-
 
 
 with SinglePageLayout(server) as layout:
@@ -282,18 +274,17 @@ with SinglePageLayout(server) as layout:
         vuetify3.VBtn("Denver", click=lambda: focus_city("Denver"), classes="mx-1")
         vuetify3.VDivider(vertical=True, classes="mx-2")
         vuetify3.VBtn("Fit All", click=fit_all_cities, variant="outlined")
+        vuetify3.VBtn("Print Camera", click=print_camera, variant="text")
 
     with layout.content:
         with html.Div(
             style="position: relative; width: 100%; height: 100%;",
         ):
-            # MapLibre container - fills the space
             html.Div(
                 id="map-container",
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;",
             )
 
-            # VTK Shared View - hidden, uses MapLibre's WebGL context
             view = vtk_widgets.VtkSharedView(
                 renderWindow,
                 ref="vtkView",

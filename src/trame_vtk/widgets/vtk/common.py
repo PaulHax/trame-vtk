@@ -1050,25 +1050,6 @@ class VtkLocalView(HtmlElement):
         """Set the render size (useful for external context mode)."""
         self.server.js_call(self.__ref, "setSize", width, height)
 
-    def save_gl_state(self, **kwargs):
-        """Save WebGL state before rendering (for external context mode)."""
-        self.server.js_call(self.__ref, "saveGLState")
-
-    def restore_gl_state(self, **kwargs):
-        """Restore WebGL state after rendering (for external context mode)."""
-        self.server.js_call(self.__ref, "restoreGLState")
-
-    def prepare_external_render(self, sync_size=True, **kwargs):
-        """Prepare VTK for rendering in external context mode.
-
-        Syncs size from canvas and resets shader cache for context sharing.
-        """
-        self.server.js_call(self.__ref, "prepareExternalRender", {"syncSize": sync_size})
-
-    def reset_gl_state(self, **kwargs):
-        """Reset GL state after VTK render (for external context mode)."""
-        self.server.js_call(self.__ref, "resetGLState")
-
     def release_resources(self):
         self._server.controller.on_server_ready.discard(self.update)
         self.__view = None
@@ -1080,6 +1061,54 @@ class VtkLocalView(HtmlElement):
 
     def get_scene_object_id(self, vtk_object):
         return reference_id(vtk_object)
+
+
+class VtkSharedView(VtkLocalView):
+    """
+    VtkSharedView extends VtkLocalView for shared WebGL context rendering.
+
+    Use this view when integrating VTK rendering with another WebGL library
+    (like MapLibre, Three.js, etc.) that owns the WebGL context.
+
+    >>> shared_view = vtk.VtkSharedView(
+    ...     view=...,  # Instance of the view (required)
+    ...     widgets=[],  # List of vtkWidgets in view
+    ...     ref=...,  # Identifier for this component
+    ...     shared_context=True,  # Enable shared context mode
+    ... )
+
+    After initialization on the client side with initializeForSharedContext(),
+    use render_shared() to render VTK content within the host library's render loop.
+    """
+
+    def __init__(self, view, ref=None, widgets=[], **kwargs):
+        kwargs["shared_context"] = True
+        super().__init__(view, ref=ref, widgets=widgets, **kwargs)
+        self._attr_names += [("shared_context", "sharedContext")]
+
+    def render_shared(self, options=None, **kwargs):
+        """Render VTK in shared context mode.
+
+        This should be called from the host library's render loop.
+        It prepares the GL state and renders VTK content.
+        """
+        self.server.js_call(self._VtkLocalView__ref, "renderShared", options or {})
+
+    def initialize_for_shared_context(self, **kwargs):
+        """Initialize the view for shared WebGL context.
+
+        Call this after getting the canvas and GL context from the host library.
+        Note: The actual canvas and context must be passed on the client side.
+        """
+        self.server.js_call(self._VtkLocalView__ref, "initializeForSharedContext")
+
+    def on_render_requested(self, callback_name, **kwargs):
+        """Set callback for when VTK wants to render.
+
+        The callback will be invoked when VTK needs a re-render,
+        allowing the host library to trigger its render loop.
+        """
+        self.server.js_call(self._VtkLocalView__ref, "onRenderRequested", callback_name)
 
 
 class VtkView(HtmlElement):

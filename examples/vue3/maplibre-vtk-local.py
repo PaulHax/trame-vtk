@@ -1,7 +1,7 @@
 """
-MapLibre + VTK Local View Integration Example
+MapLibre + VTK Shared View Integration Example
 
-This example demonstrates how to use VtkLocalView with an external WebGL context
+This example demonstrates how to use VtkSharedView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
 """
 
@@ -124,7 +124,7 @@ INIT_SCRIPT_JS = """
         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
 
         // Initialize VTK with MapLibre's WebGL context
-        vtkView.initializeWithExternalContext(canvas, gl);
+        vtkView.initializeForSharedContext(canvas, gl);
 
         // Get renderer and actors, position them at Mercator coordinates
         const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
@@ -166,9 +166,7 @@ INIT_SCRIPT_JS = """
                 camera.setProjectionMatrix(matrix);
                 camera.modified();
 
-                vtkView.saveGLState();
-                vtkView.renderNow();
-                vtkView.restoreGLState();
+                vtkView.renderShared();
             }
         };
 
@@ -195,8 +193,8 @@ with SinglePageLayout(server) as layout:
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;",
             )
 
-            # VTK Local View - hidden, uses MapLibre's WebGL context
-            view = vtk_widgets.VtkLocalView(
+            # VTK Shared View - hidden, uses MapLibre's WebGL context
+            view = vtk_widgets.VtkSharedView(
                 renderWindow,
                 ref="vtkView",
                 style="display: none;",

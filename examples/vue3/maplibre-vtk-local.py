@@ -10,6 +10,8 @@ Camera control uses imperative API:
 """
 
 import math
+import asyncio
+import time
 from urllib.parse import quote as url_quote
 
 from trame.app import get_server
@@ -124,6 +126,9 @@ renderWindowInteractor = vtkRenderWindowInteractor()
 renderWindowInteractor.SetRenderWindow(renderWindow)
 renderWindowInteractor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
+cone_actors = []
+cone_base_scales = []
+
 for city in CITIES:
     x, y, z, scale = lng_lat_to_mercator(city["lng"], city["lat"])
     cone_scale = scale * 100000  # 100km cones
@@ -140,9 +145,37 @@ for city in CITIES:
     actor.SetPosition(x, y, cone_scale * 0.5)
     actor.SetScale(cone_scale, cone_scale, cone_scale)
     renderer.AddActor(actor)
+    cone_actors.append(actor)
+    cone_base_scales.append(cone_scale)
 
 renderer.ResetCamera()
 renderWindow.Render()
+
+
+animation_task = None
+
+
+async def animate_cones():
+    """Animate cone scales with a synced pulsing effect."""
+    start_time = time.time()
+    while True:
+        t = time.time() - start_time
+        scale_factor = 1.0 + 0.2 * math.sin(t * 2)
+        for actor, base_scale in zip(cone_actors, cone_base_scales):
+            current_scale = base_scale * scale_factor
+            x, y, z = actor.GetPosition()
+            actor.SetScale(current_scale, current_scale, current_scale)
+            actor.SetPosition(x, y, current_scale * 0.5)
+        ctrl.view_update()
+        server.js_call("mapController", "triggerRepaint")
+        await asyncio.sleep(1 / 30)
+
+
+@server.trigger("start_animation")
+def start_animation():
+    global animation_task
+    if animation_task is None:
+        animation_task = asyncio.create_task(animate_cones())
 
 
 # MapLibre CDN
@@ -185,6 +218,9 @@ INIT_SCRIPT_JS = """
                 pitch: map.getPitch()
             };
             window.trame.trigger('map_camera_response', [camera]);
+        },
+        triggerRepaint() {
+            if (map) map.triggerRepaint();
         }
     };
 
@@ -259,6 +295,8 @@ INIT_SCRIPT_JS = """
         };
 
         map.addLayer(vtkLayer);
+
+        window.trame.trigger('start_animation');
     };
 })();
 """

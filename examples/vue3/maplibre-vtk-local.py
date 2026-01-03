@@ -9,9 +9,23 @@ Camera control uses imperative API:
 - Python calls get_map_camera() to query current camera position
 """
 
+import math
 from urllib.parse import quote as url_quote
 
 from trame.app import get_server
+
+
+def lng_lat_to_mercator(lng, lat, alt=0):
+    """Convert lng/lat/alt to MapLibre Mercator coordinates (0-1 range)."""
+    x = (lng + 180) / 360
+    sin_lat = math.sin(math.radians(lat))
+    y = 0.5 - 0.25 * math.log((1 + sin_lat) / (1 - sin_lat)) / math.pi
+    meters_per_unit = math.cos(math.radians(lat)) * 2 * math.pi * 6378137
+    scale = 1 / meters_per_unit
+    z = alt * scale
+    return x, y, z, scale
+
+
 from trame.widgets import vtk as vtk_widgets, html, vuetify3
 from trame.ui.vuetify3 import SinglePageLayout
 
@@ -111,6 +125,9 @@ renderWindowInteractor.SetRenderWindow(renderWindow)
 renderWindowInteractor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
 for city in CITIES:
+    x, y, z, scale = lng_lat_to_mercator(city["lng"], city["lat"])
+    cone_scale = scale * 100000  # 100km cones
+
     cone_source = vtkConeSource()
     cone_source.SetHeight(1.0)
     cone_source.SetRadius(0.5)
@@ -120,6 +137,8 @@ for city in CITIES:
     actor = vtkActor()
     actor.SetMapper(mapper)
     actor.GetProperty().SetColor(*city["color"])
+    actor.SetPosition(x, y, cone_scale * 0.5)
+    actor.SetScale(cone_scale, cone_scale, cone_scale)
     renderer.AddActor(actor)
 
 renderer.ResetCamera()
@@ -138,12 +157,6 @@ INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
     let map = null;
-
-    const cities = [
-        { name: 'New York', lng: -74.006, lat: 40.7128 },
-        { name: 'Chicago', lng: -87.6298, lat: 41.8781 },
-        { name: 'Denver', lng: -104.9903, lat: 39.7392 },
-    ];
 
     // Register map controller for Python to call
     window.trame = window.trame || {};
@@ -221,19 +234,8 @@ INIT_SCRIPT_JS = """
         vtkView.initializeForSharedContext(canvas, gl);
 
         const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
-        const actors = renderer.getActors();
-        cities.forEach((city, i) => {
-            if (i < actors.length) {
-                const mercator = maplibregl.MercatorCoordinate.fromLngLat([city.lng, city.lat], 0);
-                const scale = mercator.meterInMercatorCoordinateUnits() * 100000;
-                actors[i].setPosition(mercator.x, mercator.y, scale * 0.5);
-                actors[i].setScale(scale, scale, scale);
-            }
-        });
 
-        const bounds = new maplibregl.LngLatBounds();
-        cities.forEach(city => bounds.extend([city.lng, city.lat]));
-        map.fitBounds(bounds, { padding: 100 });
+        map.fitBounds([[-104.9903, 39.7392], [-74.006, 41.8781]], { padding: 100 });
 
         const vtkLayer = {
             id: 'vtk-cones',
@@ -264,6 +266,10 @@ INIT_SCRIPT_JS = """
 server.enable_module({"scripts": [f"data:text/javascript,{url_quote(INIT_SCRIPT_JS)}"]})
 
 
+server.enable_module({
+    "styles": ["data:text/css,html { overflow-y: hidden !important; }"]
+})
+
 with SinglePageLayout(server) as layout:
     layout.title.set_text("MapLibre + VTK Geo Cones")
 
@@ -278,7 +284,7 @@ with SinglePageLayout(server) as layout:
 
     with layout.content:
         with html.Div(
-            style="position: relative; width: 100%; height: 100%;",
+            style="position: relative; width: 100%; height: 100%; overflow: hidden;",
         ):
             html.Div(
                 id="map-container",

@@ -178,10 +178,10 @@ def start_animation():
         animation_task = asyncio.create_task(animate_cones())
 
 
-# MapLibre CDN
+# MapLibre CDN (5.7.2+)
 maplibre_module = {
-    "scripts": ["https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"],
-    "styles": ["https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"],
+    "scripts": ["https://unpkg.com/maplibre-gl@5.7.2/dist/maplibre-gl.js"],
+    "styles": ["https://unpkg.com/maplibre-gl@5.7.2/dist/maplibre-gl.css"],
 }
 server.enable_module(maplibre_module)
 
@@ -264,10 +264,11 @@ INIT_SCRIPT_JS = """
 
         await new Promise(resolve => map.on('load', resolve));
 
-        const canvas = map.getCanvas();
-        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-
-        vtkView.initializeForSharedContext(canvas, gl);
+        // Route VTK render requests through MapLibre's render loop
+        // This prevents VTK auto-render from clearing the framebuffer
+        vtkView.onRenderRequested(() => {
+            map.triggerRepaint();
+        });
 
         const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
 
@@ -277,8 +278,11 @@ INIT_SCRIPT_JS = """
             id: 'vtk-cones',
             type: 'custom',
             renderingMode: '3d',
-            onAdd: function() {},
-            render: function(gl, matrix) {
+            onAdd: function(mapInstance, gl) {
+                const canvas = mapInstance.getCanvas();
+                vtkView.initializeForSharedContext(canvas, gl);
+            },
+            render: function(gl, args) {
                 if (!renderer) return;
                 const camera = renderer.getActiveCamera();
                 const identity = new Float64Array([
@@ -288,7 +292,8 @@ INIT_SCRIPT_JS = """
                     0, 0, 0, 1
                 ]);
                 camera.setViewMatrix(identity);
-                camera.setProjectionMatrix(matrix);
+                // MapLibre 5.x: use defaultProjectionData.mainMatrix
+                camera.setProjectionMatrix(args.defaultProjectionData.mainMatrix);
                 camera.modified();
                 vtkView.renderShared();
             }

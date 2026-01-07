@@ -940,7 +940,7 @@ class VtkLocalView(HtmlElement):
         self._widgets = value
         self.update()
 
-    def update(self, widgets=None, orientation_axis=0, **kwargs):
+    def update(self, widgets=None, orientation_axis=0, extra=None, **kwargs):
         """
         Force geometry to be pushed
         """
@@ -956,6 +956,8 @@ class VtkLocalView(HtmlElement):
             widgets=widgets,
             orientation_axis=orientation_axis,
         )
+        if extra:
+            delta_state.setdefault("extra", {}).update(extra)
         self.server.protocol.publish("trame.vtk.delta", delta_state)
 
         full_state = self._helper.scene(
@@ -964,6 +966,8 @@ class VtkLocalView(HtmlElement):
             widgets=widgets,
             orientation_axis=orientation_axis,
         )
+        if extra:
+            full_state.setdefault("extra", {}).update(extra)
         self.server.state[self.__scene_id] = full_state
 
     def export(self, widgets=None, orientation_axis=0, format="zip", **kwargs):

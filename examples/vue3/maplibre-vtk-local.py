@@ -178,10 +178,10 @@ def start_animation():
         animation_task = asyncio.create_task(animate_cones())
 
 
-# MapLibre CDN (5.7.2+)
+# MapLibre CDN
 maplibre_module = {
-    "scripts": ["https://unpkg.com/maplibre-gl@5.7.2/dist/maplibre-gl.js"],
-    "styles": ["https://unpkg.com/maplibre-gl@5.7.2/dist/maplibre-gl.css"],
+    "scripts": ["https://unpkg.com/maplibre-gl@5.16.0/dist/maplibre-gl.js"],
+    "styles": ["https://unpkg.com/maplibre-gl@5.16.0/dist/maplibre-gl.css"],
 }
 server.enable_module(maplibre_module)
 

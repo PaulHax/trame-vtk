@@ -93,6 +93,9 @@ def get_array_description(array, context, **kwargs):
     else:
         root["ranges"].append(get_range_info(array, 0))
 
+    if getattr(context, 'inline_data', False):
+        root["content"] = context.get_cached_data_array(p_md5, binary=False)
+
     return root
 
 

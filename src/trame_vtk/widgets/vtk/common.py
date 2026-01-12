@@ -940,9 +940,15 @@ class VtkLocalView(HtmlElement):
         self._widgets = value
         self.update()
 
-    def update(self, widgets=None, orientation_axis=0, extra=None, **kwargs):
+    def update(self, widgets=None, orientation_axis=0, extra=None, inline_arrays=False, **kwargs):
         """
         Force geometry to be pushed
+
+        Args:
+            widgets: List of widgets to serialize
+            orientation_axis: Orientation axis value
+            extra: Extra data to include in state
+            inline_arrays: If True, include array data inline (faster sync, larger payload)
         """
         if widgets is None:
             widgets = self._widgets
@@ -955,6 +961,7 @@ class VtkLocalView(HtmlElement):
             new_state=False,
             widgets=widgets,
             orientation_axis=orientation_axis,
+            inline_arrays=inline_arrays,
         )
         if extra:
             delta_state.setdefault("extra", {}).update(extra)
@@ -965,6 +972,7 @@ class VtkLocalView(HtmlElement):
             new_state=True,
             widgets=widgets,
             orientation_axis=orientation_axis,
+            inline_arrays=inline_arrays,
         )
         if extra:
             full_state.setdefault("extra", {}).update(extra)

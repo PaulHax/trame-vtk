@@ -76,6 +76,7 @@ class Helper:
         new_state=False,
         widgets=None,
         orientation_axis=0,
+        inline_arrays=False,
         **kwargs,
     ):
         scene_state = self._trame_server.protocol_call(
@@ -84,6 +85,7 @@ class Helper:
             new_state,
             widgets=widgets,
             orientation_axis=orientation_axis,
+            inline_arrays=inline_arrays,
         )
         if reset_camera:
             scene_state.setdefault("extra", {})["resetCamera"] = 1

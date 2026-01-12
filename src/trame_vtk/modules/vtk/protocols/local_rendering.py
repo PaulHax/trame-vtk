@@ -99,6 +99,7 @@ class vtkWebLocalRendering(vtkWebProtocol):
         new_subscription=False,
         widgets=None,
         orientation_axis=0,
+        inline_arrays=False,
         **kwargs,
     ):
         s_view = self.get_view(view_id)
@@ -113,7 +114,8 @@ class vtkWebLocalRendering(vtkWebProtocol):
         camera = renderer.GetActiveCamera()
         render_window_id = self.app.GetObjectIdMap().GetGlobalId(s_view)
         view_instance = serialize(
-            None, render_window, render_window_id, self.context, 1
+            None, render_window, render_window_id, self.context, 1,
+            inline_data=inline_arrays
         )
         view_instance["extra"] = {
             "vtkRefId": reference_id(render_window),

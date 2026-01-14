@@ -56,6 +56,7 @@ state, ctrl = server.state, server.controller
 # Default to sync mode
 state.sync_mode = True
 state.camera_mode = "orbit"  # "orbit", "new_york", "chicago", "denver", "fit_all"
+state.basemap = "osm"
 state.trame__title = "MapLibre + VTK Geo Cones"
 
 # City data with coordinates
@@ -132,6 +133,12 @@ def on_camera_mode_change(camera_mode, **kwargs):
         focus_city("Denver")
     elif camera_mode == "fit_all":
         fit_all_cities()
+
+
+@state.change("basemap")
+def on_basemap_change(basemap, **kwargs):
+    print(f"Switching basemap to: {basemap}", flush=True)
+    server.js_call("mapController", "setBasemap", basemap)
 
 
 # VTK setup
@@ -264,8 +271,61 @@ INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
     let map = null;
+    let vtkView = null;
+    let vtkLayerConfig = null;
     let pendingOrbitCamera = null;  // Camera target to apply at render time
     let ignoreOrbitCameraUntil = 0;  // Timestamp to ignore orbit cameras until
+
+    const BASEMAPS = {
+        osm: {
+            version: 8,
+            sources: {
+                basemap: {
+                    type: 'raster',
+                    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '© OpenStreetMap contributors'
+                }
+            },
+            layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }]
+        },
+        carto_light: {
+            version: 8,
+            sources: {
+                basemap: {
+                    type: 'raster',
+                    tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '© CARTO'
+                }
+            },
+            layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }]
+        },
+        carto_dark: {
+            version: 8,
+            sources: {
+                basemap: {
+                    type: 'raster',
+                    tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '© CARTO'
+                }
+            },
+            layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }]
+        },
+        stamen_terrain: {
+            version: 8,
+            sources: {
+                basemap: {
+                    type: 'raster',
+                    tiles: ['https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '© Stadia Maps © Stamen Design'
+                }
+            },
+            layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }]
+        }
+    };
 
     // Set up state change callback early (before component ready)
     window.onVtkViewStateChange = (state) => {
@@ -329,6 +389,16 @@ INIT_SCRIPT_JS = """
         },
         getSyncMode() {
             return syncMode;
+        },
+        setBasemap(basemapId) {
+            if (!map) return;
+            const style = BASEMAPS[basemapId];
+            if (!style) {
+                console.warn('Unknown basemap:', basemapId);
+                return;
+            }
+            console.log('Setting basemap to:', basemapId);
+            map.setStyle(style);
         }
     };
 
@@ -336,9 +406,9 @@ INIT_SCRIPT_JS = """
         if (initialized) return;
 
         const vtkViewRef = window.trame?.refs?.['vtkView'];
-        const vtkView = vtkViewRef?.initializeForSharedContext ? vtkViewRef :
-                        vtkViewRef?.$.exposed ? vtkViewRef.$.exposed :
-                        vtkViewRef?.$.setupState;
+        vtkView = vtkViewRef?.initializeForSharedContext ? vtkViewRef :
+                  vtkViewRef?.$.exposed ? vtkViewRef.$.exposed :
+                  vtkViewRef?.$.setupState;
 
         if (!vtkView?.initializeForSharedContext || !window.maplibregl) {
             setTimeout(window.initMapLibreVTK, 100);
@@ -349,22 +419,7 @@ INIT_SCRIPT_JS = """
 
         map = new maplibregl.Map({
             container: 'map-container',
-            style: {
-                version: 8,
-                sources: {
-                    osm: {
-                        type: 'raster',
-                        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-                        tileSize: 256,
-                        attribution: '© OpenStreetMap contributors'
-                    }
-                },
-                layers: [{
-                    id: 'osm',
-                    type: 'raster',
-                    source: 'osm'
-                }]
-            },
+            style: BASEMAPS.osm,
             center: [-90, 40],
             zoom: 4,
             antialias: true
@@ -381,11 +436,12 @@ INIT_SCRIPT_JS = """
 
         map.fitBounds([[-104.9903, 39.7392], [-74.006, 41.8781]], { padding: 100 });
 
-        const vtkLayer = {
+        vtkLayerConfig = {
             id: 'vtk-cones',
             type: 'custom',
             renderingMode: '3d',
             onAdd: function(mapInstance, gl) {
+                console.log('VTK layer onAdd called');
                 const canvas = mapInstance.getCanvas();
                 // syncStateAtRender option: queue state when it arrives, apply at render time
                 const options = syncMode ? { syncStateAtRender: true } : {};
@@ -428,7 +484,21 @@ INIT_SCRIPT_JS = """
             }
         };
 
-        map.addLayer(vtkLayer);
+        map.addLayer(vtkLayerConfig);
+
+        // Re-add VTK layer after style changes
+        map.on('style.load', () => {
+            console.log('style.load event fired');
+            if (vtkLayerConfig) {
+                try {
+                    if (map.getLayer('vtk-cones')) {
+                        map.removeLayer('vtk-cones');
+                    }
+                } catch (e) {}
+                console.log('Re-adding VTK layer');
+                map.addLayer(vtkLayerConfig);
+            }
+        });
 
         // Update title to show current mode
         document.title = syncMode ?
@@ -451,6 +521,21 @@ with SinglePageLayout(server) as layout:
     layout.title.set_text("MapLibre + VTK Geo Cones")
 
     with layout.toolbar:
+        vuetify3.VSelect(
+            v_model=("basemap",),
+            items=(
+                "[{title: 'OpenStreetMap', value: 'osm'}, "
+                "{title: 'CARTO Light', value: 'carto_light'}, "
+                "{title: 'CARTO Dark', value: 'carto_dark'}, "
+                "{title: 'Stamen Terrain', value: 'stamen_terrain'}]",
+            ),
+            label="Basemap",
+            density="compact",
+            hide_details=True,
+            style="max-width: 150px;",
+            classes="mr-2",
+        )
+        vuetify3.VDivider(vertical=True, classes="mx-2")
         vuetify3.VSwitch(
             v_model=("sync_mode",),
             label=("sync_mode ? 'Sync' : 'Async'",),

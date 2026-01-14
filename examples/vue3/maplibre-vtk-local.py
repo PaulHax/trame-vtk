@@ -55,6 +55,7 @@ state, ctrl = server.state, server.controller
 
 # Default to sync mode
 state.sync_mode = True
+state.camera_mode = "orbit"  # "orbit", "new_york", "chicago", "denver", "fit_all"
 state.trame__title = "MapLibre + VTK Geo Cones"
 
 # City data with coordinates
@@ -121,6 +122,18 @@ def print_camera():
     get_map_camera()
 
 
+@state.change("camera_mode")
+def on_camera_mode_change(camera_mode, **kwargs):
+    if camera_mode == "new_york":
+        focus_city("New York")
+    elif camera_mode == "chicago":
+        focus_city("Chicago")
+    elif camera_mode == "denver":
+        focus_city("Denver")
+    elif camera_mode == "fit_all":
+        fit_all_cities()
+
+
 # VTK setup
 renderer = vtkRenderer()
 renderer.SetBackground(0, 0, 0)
@@ -162,20 +175,72 @@ renderWindow.Render()
 
 animation_task = None
 
+# Orbit center: midpoint between Denver and New York
+ORBIT_CENTER = [
+    (CITIES[0]["lng"] + CITIES[2]["lng"]) / 2,  # NY + Denver
+    (CITIES[0]["lat"] + CITIES[2]["lat"]) / 2,
+]
+ORBIT_RADIUS = 8  # degrees
+ORBIT_ZOOM = 7
+ORBIT_PITCH = 0
+
+# Create a center marker that follows the camera
+from vtkmodules.vtkFiltersSources import vtkSphereSource
+center_x, center_y, _, center_scale = lng_lat_to_mercator(ORBIT_CENTER[0], ORBIT_CENTER[1])
+sphere_source = vtkSphereSource()
+sphere_source.SetRadius(0.5)
+sphere_source.SetThetaResolution(32)
+sphere_source.SetPhiResolution(32)
+center_mapper = vtkPolyDataMapper()
+center_mapper.SetInputConnection(sphere_source.GetOutputPort())
+center_actor = vtkActor()
+center_actor.SetMapper(center_mapper)
+center_actor.GetProperty().SetColor(1.0, 0.0, 0.0)  # red
+center_actor.GetProperty().SetAmbient(1.0)  # fully ambient lit
+center_actor.GetProperty().SetDiffuse(0.0)
+center_actor.SetScale(center_scale * 50000, center_scale * 50000, center_scale * 50000)
+renderer.AddActor(center_actor)
+
 
 async def animate_cones():
-    """Animate cone scales with a rapid pulsing effect to show sync difference."""
+    """Animate cone scales and orbit camera to show sync difference."""
     start_time = time.time()
     while True:
         t = time.time() - start_time
-        # Faster animation to make jitter more visible in async mode
+
+        # Cone pulsing animation
         scale_factor = 1.0 + 0.3 * math.sin(t * 4)
         for actor, base_scale in zip(cone_actors, cone_base_scales):
             current_scale = base_scale * scale_factor
             x, y, z = actor.GetPosition()
             actor.SetScale(current_scale, current_scale, current_scale)
             actor.SetPosition(x, y, current_scale * 0.5)
-        ctrl.view_update()
+
+        # Camera orbit animation - complete circle every 20 seconds
+        if state.camera_mode == "orbit":
+            orbit_speed = 2 * math.pi / 20
+            angle = t * orbit_speed
+            camera_lng = ORBIT_CENTER[0] + ORBIT_RADIUS * math.cos(angle)
+            camera_lat = ORBIT_CENTER[1] + ORBIT_RADIUS * math.sin(angle) * 0.5  # ellipse
+
+            # Move center marker to follow camera center
+            marker_x, marker_y, _, marker_scale = lng_lat_to_mercator(camera_lng, camera_lat)
+            marker_size = marker_scale * 50000
+            center_actor.SetPosition(marker_x, marker_y, marker_size * 0.5)
+            center_actor.SetScale(marker_size, marker_size, marker_size)
+
+            # Pass camera with VTK state so they arrive together
+            ctrl.view_update(extra={
+                "orbitCamera": {
+                    "center": [camera_lng, camera_lat],
+                    "zoom": ORBIT_ZOOM,
+                    "bearing": 0,
+                    "pitch": ORBIT_PITCH,
+                }
+            })
+        else:
+            ctrl.view_update()
+
         server.js_call("mapController", "triggerRepaint")
         await asyncio.sleep(1 / 60)  # 60fps updates
 
@@ -199,6 +264,16 @@ INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
     let map = null;
+    let pendingOrbitCamera = null;  // Camera target to apply at render time
+
+    // Set up state change callback early (before component ready)
+    window.onVtkViewStateChange = (state) => {
+        console.log('[VTK] viewStateChange:', state?.extra);
+        if (state?.extra?.orbitCamera) {
+            pendingOrbitCamera = state.extra.orbitCamera;
+            console.log('[VTK] Set pendingOrbitCamera:', pendingOrbitCamera);
+        }
+    };
 
     // Parse URL param for sync mode (default to true)
     const urlParams = new URLSearchParams(window.location.search);
@@ -309,6 +384,25 @@ INIT_SCRIPT_JS = """
             },
             render: function(gl, args) {
                 if (!renderer) return;
+
+                // First apply VTK state (geometry updates) without rendering
+                vtkView.renderShared({ skipRender: true });
+
+                // Then apply camera - now geometry and camera are synced
+                if (pendingOrbitCamera) {
+                    map.jumpTo({
+                        center: pendingOrbitCamera.center,
+                        zoom: pendingOrbitCamera.zoom,
+                        bearing: pendingOrbitCamera.bearing,
+                        pitch: pendingOrbitCamera.pitch,
+                    });
+                    pendingOrbitCamera = null;
+                }
+
+                // Get fresh projection matrix after camera update
+                const projData = map.transform.getProjectionDataForCustomLayer?.() || args.defaultProjectionData;
+                const projMatrix = projData.mainMatrix;
+
                 const camera = renderer.getActiveCamera();
                 const identity = new Float64Array([
                     1, 0, 0, 0,
@@ -317,9 +411,11 @@ INIT_SCRIPT_JS = """
                     0, 0, 0, 1
                 ]);
                 camera.setViewMatrix(identity);
-                camera.setProjectionMatrix(args.defaultProjectionData.mainMatrix);
+                camera.setProjectionMatrix(projMatrix);
                 camera.modified();
-                vtkView.renderShared();
+
+                // Now render with synced geometry and camera
+                vtkView.getRenderWindow().getViews()[0]?.renderShared?.({});
             }
         };
 
@@ -346,25 +442,28 @@ with SinglePageLayout(server) as layout:
     layout.title.set_text("MapLibre + VTK Geo Cones")
 
     with layout.toolbar:
-        vuetify3.VChip(
-            "{{ sync_mode ? 'SYNC' : 'ASYNC' }}",
-            color="{{ sync_mode ? 'success' : 'warning' }}",
-            classes="mr-2",
-            size="small",
-        )
-        vuetify3.VBtn(
-            "Toggle Mode",
-            click="window.trame.refs.mapController.toggleSyncMode()",
-            variant="outlined",
-            size="small",
+        vuetify3.VSwitch(
+            v_model=("sync_mode",),
+            label=("sync_mode ? 'Sync' : 'Async'",),
+            color="success",
+            hide_details=True,
+            density="compact",
+            change="window.trame.refs.mapController.toggleSyncMode()",
             classes="mr-4",
         )
         vuetify3.VDivider(vertical=True, classes="mx-2")
-        vuetify3.VBtn("New York", click=lambda: focus_city("New York"), classes="mx-1", size="small")
-        vuetify3.VBtn("Chicago", click=lambda: focus_city("Chicago"), classes="mx-1", size="small")
-        vuetify3.VBtn("Denver", click=lambda: focus_city("Denver"), classes="mx-1", size="small")
+        with vuetify3.VBtnToggle(
+            v_model=("camera_mode",),
+            mandatory=True,
+            density="compact",
+            color="primary",
+        ):
+            vuetify3.VBtn("Orbit", value="orbit", size="small")
+            vuetify3.VBtn("New York", value="new_york", size="small")
+            vuetify3.VBtn("Chicago", value="chicago", size="small")
+            vuetify3.VBtn("Denver", value="denver", size="small")
+            vuetify3.VBtn("Fit All", value="fit_all", size="small")
         vuetify3.VDivider(vertical=True, classes="mx-2")
-        vuetify3.VBtn("Fit All", click=fit_all_cities, variant="text", size="small")
         vuetify3.VBtn("Print Camera", click=print_camera, variant="text", size="small")
 
     with layout.content:
@@ -381,6 +480,7 @@ with SinglePageLayout(server) as layout:
                 ref="vtkView",
                 style="display: none;",
                 on_ready="window.initMapLibreVTK && window.initMapLibreVTK()",
+                view_state_change="window.onVtkViewStateChange && window.onVtkViewStateChange($event)",
             )
             ctrl.view_update = view.update
 

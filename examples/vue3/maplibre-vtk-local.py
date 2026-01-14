@@ -181,7 +181,7 @@ ORBIT_CENTER = [
     (CITIES[0]["lat"] + CITIES[2]["lat"]) / 2,
 ]
 ORBIT_RADIUS = 8  # degrees
-ORBIT_ZOOM = 7
+ORBIT_ZOOM = 8
 ORBIT_PITCH = 0
 
 # Create a center marker that follows the camera
@@ -216,23 +216,23 @@ async def animate_cones():
             actor.SetScale(current_scale, current_scale, current_scale)
             actor.SetPosition(x, y, current_scale * 0.5)
 
-        # Camera orbit animation - complete circle every 20 seconds
+        # Red sphere always orbits - complete circle every 20 seconds
+        orbit_speed = 2 * math.pi / 20
+        angle = t * orbit_speed
+        orbit_lng = ORBIT_CENTER[0] + ORBIT_RADIUS * math.cos(angle)
+        orbit_lat = ORBIT_CENTER[1] + ORBIT_RADIUS * math.sin(angle) * 0.5  # ellipse
+
+        # Move center marker along orbit path
+        marker_x, marker_y, _, marker_scale = lng_lat_to_mercator(orbit_lng, orbit_lat)
+        marker_size = marker_scale * 50000
+        center_actor.SetPosition(marker_x, marker_y, marker_size * 0.5)
+        center_actor.SetScale(marker_size, marker_size, marker_size)
+
+        # In orbit mode, camera follows the sphere
         if state.camera_mode == "orbit":
-            orbit_speed = 2 * math.pi / 20
-            angle = t * orbit_speed
-            camera_lng = ORBIT_CENTER[0] + ORBIT_RADIUS * math.cos(angle)
-            camera_lat = ORBIT_CENTER[1] + ORBIT_RADIUS * math.sin(angle) * 0.5  # ellipse
-
-            # Move center marker to follow camera center
-            marker_x, marker_y, _, marker_scale = lng_lat_to_mercator(camera_lng, camera_lat)
-            marker_size = marker_scale * 50000
-            center_actor.SetPosition(marker_x, marker_y, marker_size * 0.5)
-            center_actor.SetScale(marker_size, marker_size, marker_size)
-
-            # Pass camera with VTK state so they arrive together
             ctrl.view_update(extra={
                 "orbitCamera": {
-                    "center": [camera_lng, camera_lat],
+                    "center": [orbit_lng, orbit_lat],
                     "zoom": ORBIT_ZOOM,
                     "bearing": 0,
                     "pitch": ORBIT_PITCH,
@@ -265,13 +265,18 @@ INIT_SCRIPT_JS = """
     let initialized = false;
     let map = null;
     let pendingOrbitCamera = null;  // Camera target to apply at render time
+    let ignoreOrbitCameraUntil = 0;  // Timestamp to ignore orbit cameras until
 
     // Set up state change callback early (before component ready)
     window.onVtkViewStateChange = (state) => {
-        console.log('[VTK] viewStateChange:', state?.extra);
         if (state?.extra?.orbitCamera) {
+            // Ignore orbit camera if we recently had a manual setCamera call
+            if (Date.now() < ignoreOrbitCameraUntil) {
+                return;
+            }
             pendingOrbitCamera = state.extra.orbitCamera;
-            console.log('[VTK] Set pendingOrbitCamera:', pendingOrbitCamera);
+        } else {
+            pendingOrbitCamera = null;  // Clear when not in orbit mode
         }
     };
 
@@ -285,6 +290,9 @@ INIT_SCRIPT_JS = """
     window.trame.refs.mapController = {
         setCamera({ center, zoom, bearing = 0, pitch = 0, animate = true, duration = 1000 }) {
             if (!map) return;
+            // Clear any pending orbit camera and ignore new ones during animation
+            pendingOrbitCamera = null;
+            ignoreOrbitCameraUntil = Date.now() + (animate ? duration : 100);
             const options = { center, zoom, bearing, pitch };
             if (animate) {
                 map.flyTo({ ...options, duration });
@@ -294,6 +302,9 @@ INIT_SCRIPT_JS = """
         },
         fitBounds(bounds, padding = 100, animate = true) {
             if (!map) return;
+            // Clear any pending orbit camera and ignore new ones during animation
+            pendingOrbitCamera = null;
+            ignoreOrbitCameraUntil = Date.now() + (animate ? 1000 : 100);
             map.fitBounds(bounds, { padding, animate });
         },
         getCamera() {
@@ -335,7 +346,6 @@ INIT_SCRIPT_JS = """
         }
 
         initialized = true;
-        console.log('[MapLibre+VTK] Initializing with syncStateAtRender:', syncMode);
 
         map = new maplibregl.Map({
             container: 'map-container',
@@ -380,7 +390,6 @@ INIT_SCRIPT_JS = """
                 // syncStateAtRender option: queue state when it arrives, apply at render time
                 const options = syncMode ? { syncStateAtRender: true } : {};
                 vtkView.initializeForSharedContext(canvas, gl, options);
-                console.log('[MapLibre+VTK] Initialized shared context with options:', options);
             },
             render: function(gl, args) {
                 if (!renderer) return;

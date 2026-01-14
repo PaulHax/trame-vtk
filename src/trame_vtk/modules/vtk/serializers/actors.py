@@ -18,6 +18,20 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
     dependencies = []
     add_on = {}
 
+    # Always serialize property (colors need to be synced even when invisible)
+    prop = None
+    if hasattr(actor, "GetProperty"):
+        prop = actor.GetProperty()
+    else:
+        logger.debug("This actor does not have a GetProperty method")
+
+    if prop:
+        prop_id = reference_id(prop)
+        property_instance = serialize(actor, prop, prop_id, context, depth + 1)
+        if property_instance:
+            dependencies.append(property_instance)
+            calls.append(["setProperty", [wrap_id(prop_id)]])
+
     if actor_visibility:
         mapper = None
         if not hasattr(actor, "GetMapper"):
@@ -31,19 +45,6 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
             if mapper_instance:
                 dependencies.append(mapper_instance)
                 calls.append(["setMapper", [wrap_id(mapper_id)]])
-
-        prop = None
-        if hasattr(actor, "GetProperty"):
-            prop = actor.GetProperty()
-        else:
-            logger.debug("This actor does not have a GetProperty method")
-
-        if prop:
-            prop_id = reference_id(prop)
-            property_instance = serialize(actor, prop, prop_id, context, depth + 1)
-            if property_instance:
-                dependencies.append(property_instance)
-                calls.append(["setProperty", [wrap_id(prop_id)]])
 
         # Handle texture if any
         texture = None

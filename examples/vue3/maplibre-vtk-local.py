@@ -4,6 +4,12 @@ MapLibre + VTK Shared View Integration Example
 This example demonstrates how to use VtkSharedView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
 
+Sync Mode Comparison:
+- Sync mode (default): State applied atomically at render time, smooth animation
+- Async mode: State applied asynchronously, may cause jitter during animation
+
+Use URL parameter ?sync=false to use async mode. The toggle button reloads the page.
+
 Camera control uses imperative API:
 - Python calls set_map_camera() to control MapLibre camera
 - Python calls get_map_camera() to query current camera position
@@ -47,6 +53,8 @@ server = get_server()
 server.client_type = "vue3"
 state, ctrl = server.state, server.controller
 
+# Default to sync mode
+state.sync_mode = True
 state.trame__title = "MapLibre + VTK Geo Cones"
 
 # City data with coordinates
@@ -156,11 +164,12 @@ animation_task = None
 
 
 async def animate_cones():
-    """Animate cone scales with a synced pulsing effect."""
+    """Animate cone scales with a rapid pulsing effect to show sync difference."""
     start_time = time.time()
     while True:
         t = time.time() - start_time
-        scale_factor = 1.0 + 0.2 * math.sin(t * 2)
+        # Faster animation to make jitter more visible in async mode
+        scale_factor = 1.0 + 0.3 * math.sin(t * 4)
         for actor, base_scale in zip(cone_actors, cone_base_scales):
             current_scale = base_scale * scale_factor
             x, y, z = actor.GetPosition()
@@ -168,7 +177,7 @@ async def animate_cones():
             actor.SetPosition(x, y, current_scale * 0.5)
         ctrl.view_update()
         server.js_call("mapController", "triggerRepaint")
-        await asyncio.sleep(1 / 30)
+        await asyncio.sleep(1 / 60)  # 60fps updates
 
 
 @server.trigger("start_animation")
@@ -185,11 +194,15 @@ maplibre_module = {
 }
 server.enable_module(maplibre_module)
 
-# JavaScript initialization with imperative map controller
+# JavaScript initialization - reads sync mode from URL param
 INIT_SCRIPT_JS = """
 (function() {
     let initialized = false;
     let map = null;
+
+    // Parse URL param for sync mode (default to true)
+    const urlParams = new URLSearchParams(window.location.search);
+    const syncMode = urlParams.get('sync') !== 'false';
 
     // Register map controller for Python to call
     window.trame = window.trame || {};
@@ -221,6 +234,15 @@ INIT_SCRIPT_JS = """
         },
         triggerRepaint() {
             if (map) map.triggerRepaint();
+        },
+        toggleSyncMode() {
+            const newMode = !syncMode;
+            const url = new URL(window.location);
+            url.searchParams.set('sync', newMode);
+            window.location.href = url.toString();
+        },
+        getSyncMode() {
+            return syncMode;
         }
     };
 
@@ -238,6 +260,7 @@ INIT_SCRIPT_JS = """
         }
 
         initialized = true;
+        console.log('[MapLibre+VTK] Initializing with syncStateAtRender:', syncMode);
 
         map = new maplibregl.Map({
             container: 'map-container',
@@ -265,7 +288,6 @@ INIT_SCRIPT_JS = """
         await new Promise(resolve => map.on('load', resolve));
 
         // Route VTK render requests through MapLibre's render loop
-        // This prevents VTK auto-render from clearing the framebuffer
         vtkView.onRenderRequested(() => {
             map.triggerRepaint();
         });
@@ -280,7 +302,10 @@ INIT_SCRIPT_JS = """
             renderingMode: '3d',
             onAdd: function(mapInstance, gl) {
                 const canvas = mapInstance.getCanvas();
-                vtkView.initializeForSharedContext(canvas, gl);
+                // syncStateAtRender option: queue state when it arrives, apply at render time
+                const options = syncMode ? { syncStateAtRender: true } : {};
+                vtkView.initializeForSharedContext(canvas, gl, options);
+                console.log('[MapLibre+VTK] Initialized shared context with options:', options);
             },
             render: function(gl, args) {
                 if (!renderer) return;
@@ -292,7 +317,6 @@ INIT_SCRIPT_JS = """
                     0, 0, 0, 1
                 ]);
                 camera.setViewMatrix(identity);
-                // MapLibre 5.x: use defaultProjectionData.mainMatrix
                 camera.setProjectionMatrix(args.defaultProjectionData.mainMatrix);
                 camera.modified();
                 vtkView.renderShared();
@@ -300,6 +324,11 @@ INIT_SCRIPT_JS = """
         };
 
         map.addLayer(vtkLayer);
+
+        // Update title to show current mode
+        document.title = syncMode ?
+            'MapLibre + VTK (SYNC mode)' :
+            'MapLibre + VTK (ASYNC mode)';
 
         window.trame.trigger('start_animation');
     };
@@ -317,13 +346,26 @@ with SinglePageLayout(server) as layout:
     layout.title.set_text("MapLibre + VTK Geo Cones")
 
     with layout.toolbar:
-        vuetify3.VSpacer()
-        vuetify3.VBtn("New York", click=lambda: focus_city("New York"), classes="mx-1")
-        vuetify3.VBtn("Chicago", click=lambda: focus_city("Chicago"), classes="mx-1")
-        vuetify3.VBtn("Denver", click=lambda: focus_city("Denver"), classes="mx-1")
+        vuetify3.VChip(
+            "{{ sync_mode ? 'SYNC' : 'ASYNC' }}",
+            color="{{ sync_mode ? 'success' : 'warning' }}",
+            classes="mr-2",
+            size="small",
+        )
+        vuetify3.VBtn(
+            "Toggle Mode",
+            click="window.trame.refs.mapController.toggleSyncMode()",
+            variant="outlined",
+            size="small",
+            classes="mr-4",
+        )
         vuetify3.VDivider(vertical=True, classes="mx-2")
-        vuetify3.VBtn("Fit All", click=fit_all_cities, variant="outlined")
-        vuetify3.VBtn("Print Camera", click=print_camera, variant="text")
+        vuetify3.VBtn("New York", click=lambda: focus_city("New York"), classes="mx-1", size="small")
+        vuetify3.VBtn("Chicago", click=lambda: focus_city("Chicago"), classes="mx-1", size="small")
+        vuetify3.VBtn("Denver", click=lambda: focus_city("Denver"), classes="mx-1", size="small")
+        vuetify3.VDivider(vertical=True, classes="mx-2")
+        vuetify3.VBtn("Fit All", click=fit_all_cities, variant="text", size="small")
+        vuetify3.VBtn("Print Camera", click=print_camera, variant="text", size="small")
 
     with layout.content:
         with html.Div(
@@ -342,5 +384,16 @@ with SinglePageLayout(server) as layout:
             )
             ctrl.view_update = view.update
 
+
+# Parse command line for initial sync mode
+import sys
+if '--sync=false' in sys.argv or '--async' in sys.argv:
+    state.sync_mode = False
+    print("Starting in ASYNC mode")
+else:
+    state.sync_mode = True
+    print("Starting in SYNC mode (default)")
+
+print("Use ?sync=false in URL or 'Toggle Mode' button to switch")
 
 server.start()

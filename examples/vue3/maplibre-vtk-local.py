@@ -237,16 +237,19 @@ async def animate_cones():
 
         # In orbit mode, camera follows the sphere
         if state.camera_mode == "orbit":
-            ctrl.view_update(extra={
-                "orbitCamera": {
-                    "center": [orbit_lng, orbit_lat],
-                    "zoom": ORBIT_ZOOM,
-                    "bearing": 0,
-                    "pitch": ORBIT_PITCH,
+            ctrl.view_update(
+                inline_arrays=state.sync_mode,
+                extra={
+                    "orbitCamera": {
+                        "center": [orbit_lng, orbit_lat],
+                        "zoom": ORBIT_ZOOM,
+                        "bearing": 0,
+                        "pitch": ORBIT_PITCH,
+                    }
                 }
-            })
+            )
         else:
-            ctrl.view_update()
+            ctrl.view_update(inline_arrays=state.sync_mode)
 
         server.js_call("mapController", "triggerRepaint")
         await asyncio.sleep(1 / 60)  # 60fps updates
@@ -477,6 +480,8 @@ INIT_SCRIPT_JS = """
                 ]);
                 camera.setViewMatrix(identity);
                 camera.setProjectionMatrix(projMatrix);
+                // Note: setViewMatrix/setProjectionMatrix do not mark the camera modified.
+                // If you set them directly, call modified() so key matrices are recomputed.
                 camera.modified();
 
                 // Now render with synced geometry and camera

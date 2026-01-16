@@ -433,7 +433,6 @@ class VtkRemoteLocalView(HtmlElement):
             ("box_selection", "boxSelection"),
             ("disable_auto_switch", "disableAutoSwitch"),
             ("picking_modes", "pickingModes"),
-            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             "click",
@@ -879,7 +878,6 @@ class VtkLocalView(HtmlElement):
             ("context_name", "contextName"),
             ("box_selection", "boxSelection"),
             ("picking_modes", "pickingModes"),
-            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             ("on_image_capture", "onImageCapture"),
@@ -940,15 +938,9 @@ class VtkLocalView(HtmlElement):
         self._widgets = value
         self.update()
 
-    def update(self, widgets=None, orientation_axis=0, extra=None, inline_arrays=False, **kwargs):
+    def update(self, widgets=None, orientation_axis=0, **kwargs):
         """
         Force geometry to be pushed
-
-        Args:
-            widgets: List of widgets to serialize
-            orientation_axis: Orientation axis value
-            extra: Extra data to include in state
-            inline_arrays: If True, include array data inline (faster sync, larger payload)
         """
         if widgets is None:
             widgets = self._widgets
@@ -961,10 +953,7 @@ class VtkLocalView(HtmlElement):
             new_state=False,
             widgets=widgets,
             orientation_axis=orientation_axis,
-            inline_arrays=inline_arrays,
         )
-        if extra:
-            delta_state.setdefault("extra", {}).update(extra)
         self.server.protocol.publish("trame.vtk.delta", delta_state)
 
         full_state = self._helper.scene(
@@ -972,10 +961,7 @@ class VtkLocalView(HtmlElement):
             new_state=True,
             widgets=widgets,
             orientation_axis=orientation_axis,
-            inline_arrays=inline_arrays,
         )
-        if extra:
-            full_state.setdefault("extra", {}).update(extra)
         self.server.state[self.__scene_id] = full_state
 
     def export(self, widgets=None, orientation_axis=0, format="zip", **kwargs):
@@ -1054,14 +1040,6 @@ class VtkLocalView(HtmlElement):
             opts,
         )
 
-    def trigger_render(self, **kwargs):
-        """Trigger a render (useful for external context mode)."""
-        self.server.js_call(self.__ref, "triggerRender")
-
-    def set_size(self, width, height, **kwargs):
-        """Set the render size (useful for external context mode)."""
-        self.server.js_call(self.__ref, "setSize", width, height)
-
     def release_resources(self):
         self._server.controller.on_server_ready.discard(self.update)
         self.__view = None
@@ -1073,52 +1051,6 @@ class VtkLocalView(HtmlElement):
 
     def get_scene_object_id(self, vtk_object):
         return reference_id(vtk_object)
-
-
-class VtkSharedSyncView(VtkLocalView):
-    """
-    VtkSharedSyncView extends VtkLocalView for shared WebGL context rendering.
-
-    Use this view when integrating VTK rendering with another WebGL library
-    (like MapLibre, Three.js, etc.) that owns the WebGL context.
-
-    >>> shared_view = vtk.VtkSharedSyncView(
-    ...     view=...,  # Instance of the view (required)
-    ...     widgets=[],  # List of vtkWidgets in view
-    ...     ref=...,  # Identifier for this component
-    ... )
-
-    After initialization on the client side with initializeForSharedContext(),
-    use render_shared() to render VTK content within the host library's render loop.
-    """
-
-    def __init__(self, view, ref=None, widgets=[], **kwargs):
-        super().__init__(view, ref=ref, widgets=widgets, **kwargs)
-        self._elem_name = "vtk-shared-sync-view"
-
-    def render_shared(self, options=None, **kwargs):
-        """Render VTK in shared context mode.
-
-        This should be called from the host library's render loop.
-        It prepares the GL state and renders VTK content.
-        """
-        self.server.js_call(self._VtkLocalView__ref, "renderShared", options or {})
-
-    def initialize_for_shared_context(self, **kwargs):
-        """Initialize the view for shared WebGL context.
-
-        Call this after getting the canvas and GL context from the host library.
-        Note: The actual canvas and context must be passed on the client side.
-        """
-        self.server.js_call(self._VtkLocalView__ref, "initializeForSharedContext")
-
-    def on_render_requested(self, callback_name, **kwargs):
-        """Set callback for when VTK wants to render.
-
-        The callback will be invoked when VTK needs a re-render,
-        allowing the host library to trigger its render loop.
-        """
-        self.server.js_call(self._VtkLocalView__ref, "onRenderRequested", callback_name)
 
 
 class VtkView(HtmlElement):
@@ -1140,7 +1072,6 @@ class VtkView(HtmlElement):
             "interactor_settings",
             "picking_modes",
             "show_cube_axes",
-            ("context_options", "contextOptions"),
         ]
         self._event_names += [
             "hover",

@@ -30,7 +30,6 @@ class SynchronizationContext:
         self.data_array_cache = {}
         self.last_dependencies_mapping = {}
         self.ignore_last_dependencies = False
-        self.inline_data = False
 
     def set_ignore_last_dependencies(self, force):
         self.ignore_last_dependencies = force

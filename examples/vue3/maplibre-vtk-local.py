@@ -1,7 +1,7 @@
 """
 MapLibre + VTK Shared View Integration Example
 
-This example demonstrates how to use VtkSharedView with an external WebGL context
+This example demonstrates how to use VtkSharedSyncView with an external WebGL context
 shared with MapLibre GL JS. VTK renders 3D cones at geographic city locations.
 
 Sync Mode Comparison:
@@ -576,7 +576,7 @@ with SinglePageLayout(server) as layout:
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;",
             )
 
-            view = vtk_widgets.VtkSharedView(
+            view = vtk_widgets.VtkSharedSyncView(
                 renderWindow,
                 ref="vtkView",
                 style="display: none;",

@@ -1075,18 +1075,17 @@ class VtkLocalView(HtmlElement):
         return reference_id(vtk_object)
 
 
-class VtkSharedView(VtkLocalView):
+class VtkSharedSyncView(VtkLocalView):
     """
-    VtkSharedView extends VtkLocalView for shared WebGL context rendering.
+    VtkSharedSyncView extends VtkLocalView for shared WebGL context rendering.
 
     Use this view when integrating VTK rendering with another WebGL library
     (like MapLibre, Three.js, etc.) that owns the WebGL context.
 
-    >>> shared_view = vtk.VtkSharedView(
+    >>> shared_view = vtk.VtkSharedSyncView(
     ...     view=...,  # Instance of the view (required)
     ...     widgets=[],  # List of vtkWidgets in view
     ...     ref=...,  # Identifier for this component
-    ...     shared_context=True,  # Enable shared context mode
     ... )
 
     After initialization on the client side with initializeForSharedContext(),
@@ -1094,9 +1093,8 @@ class VtkSharedView(VtkLocalView):
     """
 
     def __init__(self, view, ref=None, widgets=[], **kwargs):
-        kwargs["shared_context"] = True
         super().__init__(view, ref=ref, widgets=widgets, **kwargs)
-        self._attr_names += [("shared_context", "sharedContext")]
+        self._elem_name = "vtk-shared-sync-view"
 
     def render_shared(self, options=None, **kwargs):
         """Render VTK in shared context mode.

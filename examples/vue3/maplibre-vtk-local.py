@@ -56,7 +56,7 @@ state, ctrl = server.state, server.controller
 # Default to sync mode
 state.sync_mode = True
 state.camera_mode = "orbit"  # "orbit", "new_york", "chicago", "denver", "fit_all"
-state.basemap = "osm"
+state.basemap = "openfreemap_positron"
 state.trame__title = "MapLibre + VTK Geo Cones"
 
 # City data with coordinates
@@ -280,6 +280,7 @@ INIT_SCRIPT_JS = """
     let ignoreOrbitCameraUntil = 0;  // Timestamp to ignore orbit cameras until
 
     const BASEMAPS = {
+        openfreemap_positron: 'https://tiles.openfreemap.org/styles/positron',
         osm: {
             version: 8,
             sources: {
@@ -422,7 +423,7 @@ INIT_SCRIPT_JS = """
 
         map = new maplibregl.Map({
             container: 'map-container',
-            style: BASEMAPS.osm,
+            style: BASEMAPS.openfreemap_positron,
             center: [-90, 40],
             zoom: 4,
             antialias: true
@@ -529,7 +530,8 @@ with SinglePageLayout(server) as layout:
         vuetify3.VSelect(
             v_model=("basemap",),
             items=(
-                "[{title: 'OpenStreetMap', value: 'osm'}, "
+                "[{title: 'OpenFreeMap Positron', value: 'openfreemap_positron'}, "
+                "{title: 'OpenStreetMap', value: 'osm'}, "
                 "{title: 'CARTO Light', value: 'carto_light'}, "
                 "{title: 'CARTO Dark', value: 'carto_dark'}, "
                 "{title: 'Stamen Terrain', value: 'stamen_terrain'}]",

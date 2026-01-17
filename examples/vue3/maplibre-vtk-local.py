@@ -46,6 +46,9 @@ from vtkmodules.vtkRenderingCore import (
     vtkActor,
 )
 
+from vtkmodules.vtkCommonCore import vtkPoints
+from vtkmodules.vtkCommonDataModel import vtkPolyData, vtkCellArray
+from vtkmodules.vtkFiltersCore import vtkTubeFilter
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleSwitch  # noqa
 import vtkmodules.vtkRenderingOpenGL2  # noqa
 
@@ -58,6 +61,7 @@ state.sync_mode = True
 state.camera_mode = "orbit"  # "orbit", "new_york", "chicago", "denver", "fit_all"
 state.basemap = "openfreemap_positron"
 state.trame__title = "MapLibre + VTK Geo Cones"
+state.orbit_speed = 1.0  # Orbit speed multiplier (0.1 to 3.0)
 
 # City data with coordinates
 CITIES = [
@@ -208,12 +212,72 @@ center_actor.GetProperty().SetDiffuse(0.0)
 center_actor.SetScale(center_scale * 50000, center_scale * 50000, center_scale * 50000)
 renderer.AddActor(center_actor)
 
+# Create orbit trail - a polyline that grows as the sphere moves
+MAX_TRAIL_POINTS = 60
+trail_points = vtkPoints()
+trail_lines = vtkCellArray()
+trail_polydata = vtkPolyData()
+trail_polydata.SetPoints(trail_points)
+trail_polydata.SetLines(trail_lines)
+
+# Use tube filter to make the trail visible as 3D geometry
+trail_tube = vtkTubeFilter()
+trail_tube.SetInputData(trail_polydata)
+trail_tube.SetNumberOfSides(8)
+trail_tube.CappingOn()
+_, _, _, initial_scale = lng_lat_to_mercator(ORBIT_CENTER[0], ORBIT_CENTER[1])
+trail_tube.SetRadius(initial_scale * 50000 * 0.25)
+
+trail_mapper = vtkPolyDataMapper()
+trail_mapper.SetInputConnection(trail_tube.GetOutputPort())
+trail_actor = vtkActor()
+trail_actor.SetMapper(trail_mapper)
+trail_actor.GetProperty().SetColor(1.0, 0.3, 0.0)  # Orange
+trail_actor.GetProperty().SetAmbient(1.0)
+trail_actor.GetProperty().SetDiffuse(0.0)
+renderer.AddActor(trail_actor)
+
+trail_scale_factor = [None]
+
+
+def update_trail(lng, lat, scale):
+    """Add a point to the orbit trail."""
+    x, y, z, _ = lng_lat_to_mercator(lng, lat)
+    z_height = scale * 0.3
+
+    if trail_scale_factor[0] is None or abs(trail_scale_factor[0] - scale) > scale * 0.1:
+        trail_scale_factor[0] = scale
+        trail_tube.SetRadius(scale * 0.25)
+
+    num_points = trail_points.GetNumberOfPoints()
+
+    if num_points >= MAX_TRAIL_POINTS:
+        for i in range(num_points - 1):
+            trail_points.SetPoint(i, trail_points.GetPoint(i + 1))
+        trail_points.SetPoint(num_points - 1, x, y, z_height)
+    else:
+        trail_points.InsertNextPoint(x, y, z_height)
+        num_points += 1
+
+    trail_lines.Reset()
+    if num_points > 1:
+        trail_lines.InsertNextCell(num_points)
+        for i in range(num_points):
+            trail_lines.InsertCellPoint(i)
+
+    trail_polydata.Modified()
+    if num_points >= 2:
+        trail_tube.Update()
+        trail_mapper.Update()
+
 
 async def animate_cones():
     """Animate cone scales and orbit camera to show sync difference."""
     start_time = time.time()
+    frame_count = 0
     while True:
         t = time.time() - start_time
+        frame_count += 1
 
         # Cone pulsing animation
         scale_factor = 1.0 + 0.3 * math.sin(t * 4)
@@ -223,9 +287,9 @@ async def animate_cones():
             actor.SetScale(current_scale, current_scale, current_scale)
             actor.SetPosition(x, y, current_scale * 0.5)
 
-        # Red sphere always orbits - complete circle every 20 seconds
-        orbit_speed = 2 * math.pi / 20
-        angle = t * orbit_speed
+        # Red sphere always orbits - complete circle every 20 seconds at speed 1.0
+        base_orbit_speed = 2 * math.pi / 20
+        angle = t * base_orbit_speed * state.orbit_speed
         orbit_lng = ORBIT_CENTER[0] + ORBIT_RADIUS * math.cos(angle)
         orbit_lat = ORBIT_CENTER[1] + ORBIT_RADIUS * math.sin(angle) * 0.5  # ellipse
 
@@ -234,6 +298,9 @@ async def animate_cones():
         marker_size = marker_scale * 50000
         center_actor.SetPosition(marker_x, marker_y, marker_size * 0.5)
         center_actor.SetScale(marker_size, marker_size, marker_size)
+
+        # Update orbit trail
+        update_trail(orbit_lng, orbit_lat, marker_size)
 
         # In orbit mode, camera follows the sphere
         if state.camera_mode == "orbit":
@@ -252,7 +319,7 @@ async def animate_cones():
             ctrl.view_update(inline_arrays=state.sync_mode)
 
         server.js_call("mapController", "triggerRepaint")
-        await asyncio.sleep(1 / 60)  # 60fps updates
+        await asyncio.sleep(1 / 30)  # 30fps updates
 
 
 @server.trigger("start_animation")
@@ -336,6 +403,8 @@ INIT_SCRIPT_JS = """
         if (state?.extra?.orbitCamera) {
             // Ignore orbit camera if we recently had a manual setCamera call
             if (Date.now() < ignoreOrbitCameraUntil) {
+                // Clear any pending orbit camera during ignore period
+                pendingOrbitCamera = null;
                 return;
             }
             pendingOrbitCamera = state.extra.orbitCamera;
@@ -447,8 +516,15 @@ INIT_SCRIPT_JS = """
             onAdd: function(mapInstance, gl) {
                 console.log('VTK layer onAdd called');
                 const canvas = mapInstance.getCanvas();
-                // syncStateAtRender option: queue state when it arrives, apply at render time
-                const options = syncMode ? { syncStateAtRender: true } : {};
+                // syncStateAtRender: queue state when it arrives, apply at render time
+                // onResyncRequired: called when client needs full array data (browser wake)
+                const options = syncMode ? {
+                    syncStateAtRender: true,
+                    onResyncRequired: () => {
+                        console.log('[VTK] Requesting resync after visibility change');
+                        window.trame.trigger('vtk_request_resync');
+                    }
+                } : {};
                 vtkView.initializeForSharedContext(canvas, gl, options);
             },
             render: function(gl, args) {
@@ -566,6 +642,18 @@ with SinglePageLayout(server) as layout:
             vuetify3.VBtn("Fit All", value="fit_all", size="small")
         vuetify3.VDivider(vertical=True, classes="mx-2")
         vuetify3.VBtn("Print Camera", click=print_camera, variant="text", size="small")
+        vuetify3.VDivider(vertical=True, classes="mx-2")
+        html.Span("Speed:", classes="mr-2")
+        vuetify3.VSlider(
+            v_model=("orbit_speed",),
+            min=0,
+            max=3,
+            step=0.1,
+            hide_details=True,
+            density="compact",
+            style="max-width: 120px;",
+            thumb_label=True,
+        )
 
     with layout.content:
         with html.Div(
@@ -584,6 +672,13 @@ with SinglePageLayout(server) as layout:
                 view_state_change="window.onVtkViewStateChange && window.onVtkViewStateChange($event)",
             )
             ctrl.view_update = view.update
+            ctrl.view_resync = view.request_resync
+
+
+@server.trigger("vtk_request_resync")
+def on_vtk_request_resync():
+    """Called by client when it needs full array data (e.g., after browser wake)."""
+    ctrl.view_resync()
 
 
 # Parse command line for initial sync mode

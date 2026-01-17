@@ -1,38 +1,16 @@
 from .common import VtkLocalView
 
 
-def _inline_all_arrays(state, server, cache):
-    """Inline all arrays using cache to avoid repeated RPC calls"""
-    if not state or not server:
-        return
+def _inline_arrays(state, server, cache, sent_hashes=None):
+    """Inline array content into state for synchronous client rendering.
 
-    def walk(node):
-        if isinstance(node, list):
-            for item in node:
-                walk(item)
-            return
-        if not isinstance(node, dict):
-            return
-
-        data_hash = node.get("hash")
-        if data_hash and node.get("dataType") and "content" not in node:
-            if data_hash not in cache:
-                cache[data_hash] = server.protocol_call(
-                    "viewport.geometry.array.get", data_hash, False
-                )
-            node["content"] = cache[data_hash]
-
-        for value in node.values():
-            walk(value)
-
-    walk(state)
-
-
-def _inline_missing_arrays(state, server, cache, sent_hashes):
-    """Inline only arrays whose hashes haven't been sent to client yet.
-
-    Client-side caching in vue-vtk-js will inject cached content for
-    arrays we skip here, enabling bandwidth savings for static geometry.
+    Args:
+        state: The VTK state dict to modify in-place
+        server: Trame server for RPC calls
+        cache: Dict to cache fetched array content (hash -> content)
+        sent_hashes: Optional set of hashes already sent to client.
+            If provided, only inlines arrays not in this set (bandwidth optimization).
+            If None, inlines all arrays.
     """
     if not state or not server:
         return
@@ -47,13 +25,21 @@ def _inline_missing_arrays(state, server, cache, sent_hashes):
 
         data_hash = node.get("hash")
         if data_hash and node.get("dataType") and "content" not in node:
-            if data_hash not in sent_hashes:
+            should_inline = sent_hashes is None or data_hash not in sent_hashes
+
+            if should_inline:
                 if data_hash not in cache:
-                    cache[data_hash] = server.protocol_call(
-                        "viewport.geometry.array.get", data_hash, False
-                    )
-                node["content"] = cache[data_hash]
-                sent_hashes.add(data_hash)
+                    try:
+                        cache[data_hash] = server.protocol_call(
+                            "viewport.geometry.array.get", data_hash, False
+                        )
+                    except Exception:
+                        pass
+                content = cache.get(data_hash)
+                if content:
+                    node["content"] = content
+                    if sent_hashes is not None:
+                        sent_hashes.add(data_hash)
 
         for value in node.values():
             walk(value)
@@ -81,12 +67,19 @@ class VtkSharedSyncView(VtkLocalView):
         """Clear sent hashes when client reconnects so full state is sent."""
         self._sent_hashes.clear()
 
+    def request_resync(self):
+        """Clear sent hashes to force full array inlining on next update.
+
+        Call this when the client may have lost cached arrays (e.g., after
+        browser sleep/wake, visibility change, or detected missing content).
+        """
+        self._sent_hashes.clear()
+
     def update(
         self,
         widgets=None,
         orientation_axis=0,
         inline_arrays=False,
-        inline_only_missing=True,
         extra=None,
         **kwargs,
     ):
@@ -95,9 +88,7 @@ class VtkSharedSyncView(VtkLocalView):
 
         Args:
             inline_arrays: If True, inline array content in the state.
-            inline_only_missing: If True (default), only inline arrays not
-                previously sent to client. Client-side caching injects cached
-                content for skipped arrays, reducing bandwidth for static geometry.
+                Uses hash tracking to skip arrays already sent to client.
         """
         if widgets is None:
             widgets = self._widgets
@@ -114,12 +105,12 @@ class VtkSharedSyncView(VtkLocalView):
             orientation_axis=orientation_axis,
         )
         if inline_arrays:
-            if inline_only_missing:
-                _inline_missing_arrays(
-                    delta_state, self.server, self._inline_array_cache, self._sent_hashes
-                )
-            else:
-                _inline_all_arrays(delta_state, self.server, self._inline_array_cache)
+            _inline_arrays(
+                delta_state,
+                self.server,
+                self._inline_array_cache,
+                self._sent_hashes,
+            )
         if extra:
             delta_state.setdefault("extra", {}).update(extra)
         self.server.protocol.publish("trame.vtk.delta", delta_state)
@@ -131,12 +122,8 @@ class VtkSharedSyncView(VtkLocalView):
             orientation_axis=orientation_axis,
         )
         if inline_arrays:
-            if inline_only_missing:
-                _inline_missing_arrays(
-                    full_state, self.server, self._inline_array_cache, self._sent_hashes
-                )
-            else:
-                _inline_all_arrays(full_state, self.server, self._inline_array_cache)
+            # Full state must have ALL arrays for client refresh/reconnect
+            _inline_arrays(full_state, self.server, self._inline_array_cache, None)
         if extra:
             full_state.setdefault("extra", {}).update(extra)
         self.server.state[self._VtkLocalView__scene_id] = full_state

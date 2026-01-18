@@ -277,6 +277,9 @@ async def animate_cones():
     animation_time = 0.0
     last_time = time.time()
     while True:
+        # Yield first to process any pending state changes from UI
+        await asyncio.sleep(0)
+
         current_time = time.time()
         if not state.animation_paused:
             animation_time += (current_time - last_time) * state.orbit_speed

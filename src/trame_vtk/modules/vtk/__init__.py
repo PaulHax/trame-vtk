@@ -201,6 +201,16 @@ class Helper:
                 return None
         return None
 
+    def register_shared_sync_view(self, view_id, widget):
+        """Register a VtkSharedSyncView for RPC-based resync."""
+        if hasattr(self, '_local_rendering_protocol'):
+            self._local_rendering_protocol.register_shared_sync_view(view_id, widget)
+
+    def unregister_shared_sync_view(self, view_id):
+        """Unregister a VtkSharedSyncView."""
+        if hasattr(self, '_local_rendering_protocol'):
+            self._local_rendering_protocol.unregister_shared_sync_view(view_id)
+
     def add_hybrid_view(
         self,
         name,

@@ -24,6 +24,7 @@ class vtkWebLocalRendering(vtkWebProtocol):
         self.context = SynchronizationContext()
         self.tracking_views = {}
         self.mtime = 0
+        self._shared_sync_views = {}
 
     # RpcName: get_array => viewport.geometry.array.get
     @export_rpc("viewport.geometry.array.get")
@@ -157,3 +158,20 @@ class vtkWebLocalRendering(vtkWebProtocol):
             )
 
         return dict(hashes=hashes, scene=scene_description)
+
+    def register_shared_sync_view(self, view_id, widget):
+        """Register a VtkSharedSyncView widget for RPC-based resync."""
+        self._shared_sync_views[view_id] = widget
+
+    def unregister_shared_sync_view(self, view_id):
+        """Unregister a VtkSharedSyncView widget."""
+        self._shared_sync_views.pop(view_id, None)
+
+    @export_rpc("viewport.geometry.view.resync")
+    def request_view_resync(self, view_id):
+        """RPC for client to request full state resync for a view."""
+        widget = self._shared_sync_views.get(view_id)
+        if widget:
+            widget.request_resync()
+            return {"success": True}
+        return {"error": f"No shared sync view registered for {view_id}"}

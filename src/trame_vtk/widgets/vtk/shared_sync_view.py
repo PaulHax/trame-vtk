@@ -73,10 +73,17 @@ class VtkSharedSyncView(VtkLocalView):
         self._debug_arrays = debug_arrays
 
         self.server.controller.on_client_connected.add(self._on_client_connected)
+        self._register_with_protocol()
 
     def _on_client_connected(self, **kwargs):
-        """Clear sent hashes when client reconnects so full state is sent."""
-        self._sent_hashes.clear()
+        """Send full state when client (re)connects."""
+        self.request_resync()
+
+    def _register_with_protocol(self):
+        """Register with protocol for RPC-based resync."""
+        view_id = self._helper.id(self._VtkLocalView__view)
+        self._view_id = view_id
+        self._helper.register_shared_sync_view(view_id, self)
 
     def request_resync(self, extra=None):
         """Request full state resync - clears tracking and publishes full state.

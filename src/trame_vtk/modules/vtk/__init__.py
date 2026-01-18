@@ -184,7 +184,22 @@ class Helper:
         )
 
         # Remote rendering - geometry delivery
-        self._root_protocol.registerLinkProtocol(vtkWebLocalRendering())
+        self._local_rendering_protocol = vtkWebLocalRendering()
+        self._root_protocol.registerLinkProtocol(self._local_rendering_protocol)
+
+    def get_array_content(self, data_hash, binary=True):
+        """Get array content directly from sync context (no RPC overhead).
+
+        Args:
+            data_hash: The hash of the array to retrieve
+            binary: If True (default), return raw bytes. If False, return base64 string.
+        """
+        if hasattr(self, '_local_rendering_protocol'):
+            try:
+                return self._local_rendering_protocol.context.get_cached_data_array(data_hash, binary)
+            except KeyError:
+                return None
+        return None
 
     def add_hybrid_view(
         self,

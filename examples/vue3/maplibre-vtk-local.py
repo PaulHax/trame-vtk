@@ -62,6 +62,7 @@ state.camera_mode = "orbit"  # "orbit", "new_york", "chicago", "denver", "fit_al
 state.basemap = "openfreemap_positron"
 state.trame__title = "MapLibre + VTK Geo Cones"
 state.orbit_speed = 1.0  # Orbit speed multiplier (0.1 to 3.0)
+state.animation_paused = False
 
 # City data with coordinates
 CITIES = [
@@ -273,23 +274,25 @@ def update_trail(lng, lat, scale):
 
 async def animate_cones():
     """Animate cone scales and orbit camera to show sync difference."""
-    start_time = time.time()
-    frame_count = 0
+    animation_time = 0.0
+    last_time = time.time()
     while True:
-        t = time.time() - start_time
-        frame_count += 1
+        current_time = time.time()
+        if not state.animation_paused:
+            animation_time += (current_time - last_time) * state.orbit_speed
+        last_time = current_time
 
         # Cone pulsing animation
-        scale_factor = 1.0 + 0.3 * math.sin(t * 4)
+        scale_factor = 1.0 + 0.3 * math.sin(animation_time * 4)
         for actor, base_scale in zip(cone_actors, cone_base_scales):
             current_scale = base_scale * scale_factor
             x, y, z = actor.GetPosition()
             actor.SetScale(current_scale, current_scale, current_scale)
             actor.SetPosition(x, y, current_scale * 0.5)
 
-        # Red sphere always orbits - complete circle every 20 seconds at speed 1.0
+        # Red sphere always orbits - complete circle every 20 seconds
         base_orbit_speed = 2 * math.pi / 20
-        angle = t * base_orbit_speed * state.orbit_speed
+        angle = animation_time * base_orbit_speed
         orbit_lng = ORBIT_CENTER[0] + ORBIT_RADIUS * math.cos(angle)
         orbit_lat = ORBIT_CENTER[1] + ORBIT_RADIUS * math.sin(angle) * 0.5  # ellipse
 
@@ -643,7 +646,13 @@ with SinglePageLayout(server) as layout:
         vuetify3.VDivider(vertical=True, classes="mx-2")
         vuetify3.VBtn("Print Camera", click=print_camera, variant="text", size="small")
         vuetify3.VDivider(vertical=True, classes="mx-2")
-        html.Span("Speed:", classes="mr-2")
+        vuetify3.VBtn(
+            "{{ animation_paused ? 'Play' : 'Pause' }}",
+            click="animation_paused = !animation_paused",
+            variant="text",
+            size="small",
+        )
+        html.Span("Speed:", classes="ml-2 mr-2")
         vuetify3.VSlider(
             v_model=("orbit_speed",),
             min=0,

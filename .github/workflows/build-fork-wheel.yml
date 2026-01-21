@@ -1,0 +1,56 @@
+name: Build Fork Wheel
+
+on:
+  push:
+    branches: [shared-context]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Clone and build vtk-js fork
+        run: |
+          git clone --depth 1 --branch shared-context https://github.com/PaulHax/vtk-js.git
+          cd vtk-js && npm ci && npm run build:esm
+          cd dist/esm && npm link
+
+      - name: Clone and build vue-vtk-js fork
+        run: |
+          git clone --depth 1 --branch shared-context https://github.com/PaulHax/vue-vtk-js.git
+          cd vue-vtk-js && npm ci && npm link @kitware/vtk.js && npm run build
+
+      - name: Copy bundle to trame-vtk
+        run: cp vue-vtk-js/dist/vue-vtk.umd.js src/trame_vtk/modules/common/serve/trame-vtk.js
+
+      - name: Build wheel
+        run: pip install build && python -m build --wheel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trame-vtk-fork-wheel
+          path: dist/*.whl
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name || format('v{0}-fork', github.run_number) }}
+          files: dist/*.whl
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}

@@ -131,4 +131,3 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-src/trame_vtk/modules/common/serve/trame-vtk.js

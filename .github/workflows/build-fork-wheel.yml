@@ -37,7 +37,9 @@ jobs:
           cd vue-vtk-js && npm ci && npm link @kitware/vtk.js && npm run build
 
       - name: Copy bundle to trame-vtk
-        run: cp vue-vtk-js/dist/vue-vtk.umd.js src/trame_vtk/modules/common/serve/trame-vtk.js
+        run: |
+          mkdir -p src/trame_vtk/modules/common/serve
+          cp vue-vtk-js/dist/vue-vtk.umd.js src/trame_vtk/modules/common/serve/trame-vtk.js
 
       - name: Build wheel
         run: pip install build && python -m build --wheel

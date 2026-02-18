@@ -18,21 +18,6 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
     dependencies = []
     add_on = {}
 
-    # Always serialize property even when invisible, so representation mode
-    # (wireframe, etc.) is preserved when visibility is later turned on
-    prop = None
-    if hasattr(actor, "GetProperty"):
-        prop = actor.GetProperty()
-    else:
-        logger.debug("This actor does not have a GetProperty method")
-
-    if prop:
-        prop_id = reference_id(prop)
-        property_instance = serialize(actor, prop, prop_id, context, depth + 1)
-        if property_instance:
-            dependencies.append(property_instance)
-            calls.append(["setProperty", [wrap_id(prop_id)]])
-
     if actor_visibility:
         mapper = None
         if not hasattr(actor, "GetMapper"):
@@ -60,6 +45,23 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
             if texture_instance:
                 dependencies.append(texture_instance)
                 calls.append(["addTexture", [wrap_id(texture_id)]])
+
+    # Only serialize property when the actor will be included in the output,
+    # to avoid populating the property cache for discarded actors (which causes
+    # subsequent deltas to send empty properties when the actor first appears).
+    if actor_visibility == 0 or mapper_instance:
+        prop = None
+        if hasattr(actor, "GetProperty"):
+            prop = actor.GetProperty()
+        else:
+            logger.debug("This actor does not have a GetProperty method")
+
+        if prop:
+            prop_id = reference_id(prop)
+            property_instance = serialize(actor, prop, prop_id, context, depth + 1)
+            if property_instance:
+                dependencies.append(property_instance)
+                calls.append(["setProperty", [wrap_id(prop_id)]])
 
     # Apply transform
     if actor.GetUserMatrix():

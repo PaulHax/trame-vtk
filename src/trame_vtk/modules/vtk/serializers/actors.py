@@ -3,7 +3,7 @@ import logging
 from .registry import class_name
 from .serialize import serialize
 from .utils import reference_id, rgb_float_to_hex, wrap_id
-from .cache import cache_properties
+from .cache import cache_properties, clear_cached_properties
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +13,7 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
     # mapper
     actor_visibility = actor.GetVisibility()
     mapper_instance = None
+    mapper_id = None
     property_instance = None
     calls = []
     dependencies = []
@@ -32,19 +33,23 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
                 dependencies.append(mapper_instance)
                 calls.append(["setMapper", [wrap_id(mapper_id)]])
 
-        # Handle texture if any
-        texture = None
-        if hasattr(actor, "GetTexture"):
-            texture = actor.GetTexture()
-        else:
-            logger.debug("This actor does not have a GetTexture method")
+        # Texture is only needed when the mapper is valid and the actor will
+        # actually be part of the returned scene.
+        if mapper_instance:
+            texture = None
+            if hasattr(actor, "GetTexture"):
+                texture = actor.GetTexture()
+            else:
+                logger.debug("This actor does not have a GetTexture method")
 
-        if texture:
-            texture_id = reference_id(texture)
-            texture_instance = serialize(actor, texture, texture_id, context, depth + 1)
-            if texture_instance:
-                dependencies.append(texture_instance)
-                calls.append(["addTexture", [wrap_id(texture_id)]])
+            if texture:
+                texture_id = reference_id(texture)
+                texture_instance = serialize(
+                    actor, texture, texture_id, context, depth + 1
+                )
+                if texture_instance:
+                    dependencies.append(texture_instance)
+                    calls.append(["addTexture", [wrap_id(texture_id)]])
 
     # Only serialize property when the actor will be included in the output,
     # to avoid populating the property cache for discarded actors (which causes
@@ -102,6 +107,17 @@ def generic_actor_serializer(parent, actor, actor_id, context, depth):
             "calls": calls,
             "dependencies": dependencies,
         }
+
+    if actor_visibility:
+        # If a previously-serialized actor is now discarded (e.g. mapper has no
+        # output), clear its cached props so re-appearance sends a full payload.
+        prop_id = None
+        if hasattr(actor, "GetProperty"):
+            prop = actor.GetProperty()
+            if prop:
+                prop_id = reference_id(prop)
+
+        clear_cached_properties(actor_id, mapper_id, prop_id)
 
     return None
 

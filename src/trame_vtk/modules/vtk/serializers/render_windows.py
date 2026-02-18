@@ -55,7 +55,7 @@ def renderer_serializer(parent, instance, obj_id, context, depth):
             "id": obj_id,
             "type": class_name(instance),
             "properties": {
-                "background": instance.GetBackground(),
+                "background": [*instance.GetBackground(), instance.GetBackgroundAlpha()],
                 "background2": instance.GetBackground2(),
                 "viewport": instance.GetViewport(),
                 # These commented properties do not yet have real setters in vtk.js

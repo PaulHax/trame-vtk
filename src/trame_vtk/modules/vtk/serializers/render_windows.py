@@ -96,6 +96,9 @@ def camera_serializer(parent, instance, obj_id, context, depth):
             "position": instance.GetPosition(),
             "viewUp": instance.GetViewUp(),
             "clippingRange": instance.GetClippingRange(),
+            "parallelProjection": instance.GetParallelProjection(),
+            "parallelScale": instance.GetParallelScale(),
+            "viewAngle": instance.GetViewAngle(),
         },
     }
 

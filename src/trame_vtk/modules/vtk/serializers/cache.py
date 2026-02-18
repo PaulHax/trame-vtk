@@ -18,3 +18,9 @@ def cache_properties(obj_id, ctx, props):
 
     PROP_CACHE[obj_id] = props
     return props
+
+
+def clear_cached_properties(*obj_ids):
+    for obj_id in obj_ids:
+        if obj_id is not None:
+            PROP_CACHE.pop(obj_id, None)

@@ -87,19 +87,28 @@ def renderer_serializer(parent, instance, obj_id, context, depth):
 
 
 def camera_serializer(parent, instance, obj_id, context, depth):
+    properties = {
+        "focalPoint": instance.GetFocalPoint(),
+        "position": instance.GetPosition(),
+        "viewUp": instance.GetViewUp(),
+        "clippingRange": instance.GetClippingRange(),
+        "parallelProjection": instance.GetParallelProjection(),
+        "parallelScale": instance.GetParallelScale(),
+        "viewAngle": instance.GetViewAngle(),
+        "windowCenter": instance.GetWindowCenter(),
+    }
+
+    if instance.GetUseExplicitProjectionTransformMatrix():
+        m = instance.GetExplicitProjectionTransformMatrix()
+        properties["projectionMatrix"] = [
+            m.GetElement(j, i) for i in range(4) for j in range(4)
+        ]
+
     return {
         "parent": reference_id(parent),
         "id": obj_id,
         "type": class_name(instance),
-        "properties": {
-            "focalPoint": instance.GetFocalPoint(),
-            "position": instance.GetPosition(),
-            "viewUp": instance.GetViewUp(),
-            "clippingRange": instance.GetClippingRange(),
-            "parallelProjection": instance.GetParallelProjection(),
-            "parallelScale": instance.GetParallelScale(),
-            "viewAngle": instance.GetViewAngle(),
-        },
+        "properties": properties,
     }
 
 

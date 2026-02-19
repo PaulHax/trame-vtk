@@ -167,10 +167,6 @@ class VtkSharedSyncView(VtkLocalView):
         """Forward VTK render requests to the host."""
         self.server.js_call(self._VtkLocalView__ref, "onRenderRequested", callback_name)
 
-    def trigger_render(self, **kwargs):
-        """Trigger a render (useful for external context mode)."""
-        self.server.js_call(self._VtkLocalView__ref, "triggerRender")
-
     def set_size(self, width, height, **kwargs):
         """Set render size (useful for external context mode)."""
         self.server.js_call(self._VtkLocalView__ref, "setSize", width, height)

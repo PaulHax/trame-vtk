@@ -1,24 +1,25 @@
+import copy
+
 from .common import VtkLocalView
 from trame_vtk.modules.vtk import get_helper
 
 
-def _inline_arrays(state, server, cache, sent_hashes=None, debug=False):
+def _inline_arrays(state, server, cache, debug=False):
     """Inline array content into state for synchronous client rendering.
+
+    Every array node gets content inlined (vtk.js synchronous path requires it).
 
     Args:
         state: The VTK state dict to modify in-place
         server: Trame server for RPC calls
         cache: Dict to cache fetched array content (hash -> content)
-        sent_hashes: Optional set of hashes already sent to client.
-            If provided, only inlines arrays not in this set (bandwidth optimization).
-            If None, inlines all arrays.
         debug: If True, print inlining statistics.
     """
     if not state or not server:
         return
 
     helper = get_helper(server)
-    stats = {"inlined": 0, "skipped": 0, "total": 0}
+    stats = {"inlined": 0, "missing": 0, "total": 0}
 
     def walk(node):
         if isinstance(node, list):
@@ -31,22 +32,16 @@ def _inline_arrays(state, server, cache, sent_hashes=None, debug=False):
         data_hash = node.get("hash")
         if data_hash and node.get("dataType") and "content" not in node:
             stats["total"] += 1
-            should_inline = sent_hashes is None or data_hash not in sent_hashes
-
-            if should_inline:
-                if data_hash not in cache:
-                    # Use direct context access with binary=True (no base64 overhead)
-                    content = helper.get_array_content(data_hash, binary=True) if helper else None
-                    if content:
-                        cache[data_hash] = content
-                content = cache.get(data_hash)
+            if data_hash not in cache:
+                content = helper.get_array_content(data_hash, binary=False) if helper else None
                 if content:
-                    node["content"] = content
-                    if sent_hashes is not None:
-                        sent_hashes.add(data_hash)
-                    stats["inlined"] += 1
+                    cache[data_hash] = content
+            content = cache.get(data_hash)
+            if content:
+                node["content"] = content
+                stats["inlined"] += 1
             else:
-                stats["skipped"] += 1
+                stats["missing"] += 1
 
         for value in node.values():
             walk(value)
@@ -54,7 +49,7 @@ def _inline_arrays(state, server, cache, sent_hashes=None, debug=False):
     walk(state)
 
     if debug and stats["total"] > 0:
-        print(f"[ARRAYS] inlined={stats['inlined']} skipped={stats['skipped']} total={stats['total']}", flush=True)
+        print(f"[ARRAYS] inlined={stats['inlined']} missing={stats['missing']} total={stats['total']}", flush=True)
 
 
 class VtkSharedSyncView(VtkLocalView):
@@ -69,7 +64,6 @@ class VtkSharedSyncView(VtkLocalView):
         super().__init__(view, ref=ref, widgets=widgets or [], **kwargs)
         self._elem_name = "vtk-shared-sync-view"
         self._inline_array_cache = {}
-        self._sent_hashes = set()
         self._debug_arrays = debug_arrays
 
         self.server.controller.on_client_connected.add(self._on_client_connected)
@@ -86,33 +80,34 @@ class VtkSharedSyncView(VtkLocalView):
         self._helper.register_shared_sync_view(view_id, self)
 
     def request_resync(self, extra=None):
-        """Request full state resync - clears tracking and publishes full state.
+        """Request full state resync and publish via trame.vtk.delta.
 
         Call this when the client needs full state (e.g., on mount, after
         browser sleep/wake, visibility change, or detected missing content).
-
-        This publishes the full state with ALL arrays inlined via trame.vtk.delta.
         """
-        self._sent_hashes.clear()
-
         if not self.server.protocol:
             return
 
         view = self._VtkLocalView__view
 
-        # Get full state with ALL arrays inlined
+        prop_state = self._helper.scene(
+            view,
+            new_state=True,
+            widgets=self._widgets,
+            orientation_axis=0,
+        )
+        self.server.state[self._VtkLocalView__scene_id] = prop_state
+
         full_state = self._helper.scene(
             view,
             new_state=True,
             widgets=self._widgets,
             orientation_axis=0,
         )
-        _inline_arrays(full_state, self.server, self._inline_array_cache, self._sent_hashes, debug=self._debug_arrays)
+        _inline_arrays(full_state, self.server, self._inline_array_cache, debug=self._debug_arrays)
         if extra:
             full_state.setdefault("extra", {}).update(extra)
-
-        # Publish via delta channel (client is subscribed to this)
-        self.server.protocol.publish("trame.vtk.delta", full_state)
+        self.server.protocol.publish("trame.vtk.delta", copy.deepcopy(full_state))
 
     def update(
         self,
@@ -148,12 +143,11 @@ class VtkSharedSyncView(VtkLocalView):
                 delta_state,
                 self.server,
                 self._inline_array_cache,
-                self._sent_hashes,
                 debug=self._debug_arrays,
             )
         if extra:
             delta_state.setdefault("extra", {}).update(extra)
-        self.server.protocol.publish("trame.vtk.delta", delta_state)
+        self.server.protocol.publish("trame.vtk.delta", copy.deepcopy(delta_state))
 
     def render_shared(self, options=None, **kwargs):
         """Render VTK in shared context mode (host render loop)."""

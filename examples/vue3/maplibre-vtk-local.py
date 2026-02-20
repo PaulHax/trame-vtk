@@ -511,8 +511,6 @@ INIT_SCRIPT_JS = """
             map.triggerRepaint();
         });
 
-        const renderer = vtkView.getRenderWindow().getRenderersByReference()[0];
-
         map.fitBounds([[-104.9903, 39.7392], [-74.006, 41.8781]], { padding: 100 });
 
         vtkLayerConfig = {
@@ -534,12 +532,15 @@ INIT_SCRIPT_JS = """
                 vtkView.initializeForSharedContext(canvas, gl, options);
             },
             render: function(gl, args) {
-                if (!renderer) return;
-
-                // First apply VTK state (geometry updates) without rendering
+                // Apply queued VTK state (creates renderer/actors on first sync)
                 vtkView.renderShared({ skipRender: true });
 
-                // Then apply camera - now geometry and camera are synced
+                // Renderer only exists after state sync
+                const renderers = vtkView.getRenderWindow().getRenderersByReference();
+                if (!renderers.length) return;
+                const renderer = renderers[0];
+
+                // Apply camera - now geometry and camera are synced
                 if (pendingOrbitCamera) {
                     map.jumpTo({
                         center: pendingOrbitCamera.center,
@@ -563,11 +564,8 @@ INIT_SCRIPT_JS = """
                 ]);
                 camera.setViewMatrix(identity);
                 camera.setProjectionMatrix(projMatrix);
-                // Note: setViewMatrix/setProjectionMatrix do not mark the camera modified.
-                // If you set them directly, call modified() so key matrices are recomputed.
                 camera.modified();
 
-                // Now render with synced geometry and camera
                 vtkView.getRenderWindow().getViews()[0]?.renderShared?.({});
             }
         };

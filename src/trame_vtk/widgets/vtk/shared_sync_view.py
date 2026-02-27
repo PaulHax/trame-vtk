@@ -33,7 +33,11 @@ def _inline_arrays(state, server, cache, debug=False):
         if data_hash and node.get("dataType") and "content" not in node:
             stats["total"] += 1
             if data_hash not in cache:
-                content = helper.get_array_content(data_hash, binary=False) if helper else None
+                content = (
+                    helper.get_array_content(data_hash, binary=False)
+                    if helper
+                    else None
+                )
                 if content:
                     cache[data_hash] = content
             content = cache.get(data_hash)
@@ -49,7 +53,10 @@ def _inline_arrays(state, server, cache, debug=False):
     walk(state)
 
     if debug and stats["total"] > 0:
-        print(f"[ARRAYS] inlined={stats['inlined']} missing={stats['missing']} total={stats['total']}", flush=True)
+        print(
+            f"[ARRAYS] inlined={stats['inlined']} missing={stats['missing']} total={stats['total']}",
+            flush=True,
+        )
 
 
 class VtkSharedSyncView(VtkLocalView):
@@ -66,12 +73,8 @@ class VtkSharedSyncView(VtkLocalView):
         self._inline_array_cache = {}
         self._debug_arrays = debug_arrays
 
-        self.server.controller.on_client_connected.add(self._on_client_connected)
         self._register_with_protocol()
-
-    def _on_client_connected(self, **kwargs):
-        """Send full state when client (re)connects."""
-        self.request_resync()
+        self.server.controller.on_server_ready.add(self._set_initial_view_state)
 
     def _register_with_protocol(self):
         """Register with protocol for RPC-based resync."""
@@ -79,14 +82,20 @@ class VtkSharedSyncView(VtkLocalView):
         self._view_id = view_id
         self._helper.register_shared_sync_view(view_id, self)
 
-    def request_resync(self, extra=None):
-        """Request full state resync and publish via trame.vtk.delta.
+    def _set_initial_view_state(self, **_kwargs):
+        """Set viewState so JS knows the render window ID at mount time."""
+        full_state = self._helper.scene(
+            self._VtkLocalView__view,
+            new_state=True,
+            widgets=self._widgets,
+            orientation_axis=0,
+        )
+        self.server.state[self._VtkLocalView__scene_id] = full_state
 
-        Call this when the client needs full state (e.g., on mount, after
-        browser sleep/wake, visibility change, or detected missing content).
-        """
+    def get_resync_state(self, extra=None):
+        """Build and return the full resync state without publishing."""
         if not self.server.protocol:
-            return
+            return None
 
         view = self._VtkLocalView__view
 
@@ -104,10 +113,21 @@ class VtkSharedSyncView(VtkLocalView):
             widgets=self._widgets,
             orientation_axis=0,
         )
-        _inline_arrays(full_state, self.server, self._inline_array_cache, debug=self._debug_arrays)
+        _inline_arrays(
+            full_state, self.server, self._inline_array_cache, debug=self._debug_arrays
+        )
         if extra:
             full_state.setdefault("extra", {}).update(extra)
-        self.server.protocol.publish("trame.vtk.delta", copy.deepcopy(full_state))
+        return full_state
+
+    def request_resync(self, extra=None):
+        """Build full state and broadcast via trame.vtk.delta.
+
+        Used for visibility-change recovery where all clients need resyncing.
+        """
+        full_state = self.get_resync_state(extra)
+        if full_state:
+            self.server.protocol.publish("trame.vtk.delta", copy.deepcopy(full_state))
 
     def update(
         self,

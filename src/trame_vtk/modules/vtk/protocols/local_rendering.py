@@ -169,13 +169,17 @@ class vtkWebLocalRendering(vtkWebProtocol):
 
     @export_rpc("viewport.geometry.view.resync")
     def request_view_resync(self, view_id):
-        """RPC for client to request full state resync for a view."""
+        """RPC: return full resync state for the given view (or first registered view)."""
         if not view_id:
             for widget in self._shared_sync_views.values():
-                widget.request_resync()
-            return {"success": True}
+                state = widget.get_resync_state()
+                if state:
+                    return state
+            return {"error": "No shared sync views registered"}
         widget = self._shared_sync_views.get(view_id)
         if widget:
-            widget.request_resync()
-            return {"success": True}
+            state = widget.get_resync_state()
+            if state:
+                return state
+            return {"error": f"Could not build state for {view_id}"}
         return {"error": f"No shared sync view registered for {view_id}"}

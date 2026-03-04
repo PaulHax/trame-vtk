@@ -181,5 +181,5 @@ class vtkWebLocalRendering(vtkWebProtocol):
             state = widget.get_resync_state()
             if state:
                 return state
-            return {"error": f"Could not build state for {view_id}"}
+            return {"error": f"Protocol not ready for view {view_id}"}
         return {"error": f"No shared sync view registered for {view_id}"}

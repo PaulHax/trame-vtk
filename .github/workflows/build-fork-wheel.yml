@@ -49,10 +49,17 @@ jobs:
           name: trame-vtk-fork-wheel
           path: dist/*.whl
 
+      - name: Get version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "tag=v${VERSION}-shared-context.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/shared-context' || github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name || format('v{0}-fork', github.run_number) }}
+          tag_name: ${{ steps.version.outputs.tag || github.ref_name }}
           files: dist/*.whl
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          prerelease: true

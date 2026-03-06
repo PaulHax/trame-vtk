@@ -4,7 +4,7 @@ from .common import VtkLocalView
 from trame_vtk.modules.vtk import get_helper
 
 
-def _inline_arrays(state, server, cache, debug=False):
+def _inline_arrays(state, server, cache):
     """Inline array content into state for synchronous client rendering.
 
     Every array node gets content inlined (vtk.js synchronous path requires it).
@@ -13,13 +13,11 @@ def _inline_arrays(state, server, cache, debug=False):
         state: The VTK state dict to modify in-place
         server: Trame server for RPC calls
         cache: Dict to cache fetched array content (hash -> content)
-        debug: If True, print inlining statistics.
     """
     if not state or not server:
         return
 
     helper = get_helper(server)
-    stats = {"inlined": 0, "missing": 0, "total": 0}
 
     def walk(node):
         if isinstance(node, list):
@@ -31,7 +29,6 @@ def _inline_arrays(state, server, cache, debug=False):
 
         data_hash = node.get("hash")
         if data_hash and node.get("dataType") and "content" not in node:
-            stats["total"] += 1
             if data_hash not in cache:
                 content = (
                     helper.get_array_content(data_hash, binary=False)
@@ -43,20 +40,11 @@ def _inline_arrays(state, server, cache, debug=False):
             content = cache.get(data_hash)
             if content:
                 node["content"] = content
-                stats["inlined"] += 1
-            else:
-                stats["missing"] += 1
 
         for value in node.values():
             walk(value)
 
     walk(state)
-
-    if debug and stats["total"] > 0:
-        print(
-            f"[ARRAYS] inlined={stats['inlined']} missing={stats['missing']} total={stats['total']}",
-            flush=True,
-        )
 
 
 class VtkSharedSyncView(VtkLocalView):
@@ -67,11 +55,10 @@ class VtkSharedSyncView(VtkLocalView):
     (like MapLibre, Three.js, etc.) that owns the WebGL context.
     """
 
-    def __init__(self, view, ref=None, widgets=None, debug_arrays=False, **kwargs):
+    def __init__(self, view, ref=None, widgets=None, **kwargs):
         super().__init__(view, ref=ref, widgets=widgets or [], **kwargs)
         self._elem_name = "vtk-shared-sync-view"
         self._inline_array_cache = {}
-        self._debug_arrays = debug_arrays
 
         self._register_with_protocol()
         self.server.controller.on_server_ready.add(self._set_initial_view_state)
@@ -90,6 +77,7 @@ class VtkSharedSyncView(VtkLocalView):
             widgets=self._widgets,
             orientation_axis=0,
         )
+        _inline_arrays(full_state, self.server, self._inline_array_cache)
         self.server.state[self._VtkLocalView__scene_id] = full_state
 
     def get_resync_state(self, extra=None):
@@ -99,23 +87,14 @@ class VtkSharedSyncView(VtkLocalView):
 
         view = self._VtkLocalView__view
 
-        prop_state = self._helper.scene(
-            view,
-            new_state=True,
-            widgets=self._widgets,
-            orientation_axis=0,
-        )
-        self.server.state[self._VtkLocalView__scene_id] = prop_state
-
         full_state = self._helper.scene(
             view,
             new_state=True,
             widgets=self._widgets,
             orientation_axis=0,
         )
-        _inline_arrays(
-            full_state, self.server, self._inline_array_cache, debug=self._debug_arrays
-        )
+        _inline_arrays(full_state, self.server, self._inline_array_cache)
+        self.server.state[self._VtkLocalView__scene_id] = full_state
         if extra:
             full_state.setdefault("extra", {}).update(extra)
         return full_state
@@ -163,7 +142,6 @@ class VtkSharedSyncView(VtkLocalView):
                 delta_state,
                 self.server,
                 self._inline_array_cache,
-                debug=self._debug_arrays,
             )
         if extra:
             delta_state.setdefault("extra", {}).update(extra)

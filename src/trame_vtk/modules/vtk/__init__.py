@@ -39,6 +39,7 @@ class Helper:
     def __init__(self, trame_server):
         self._root_protocol = None
         self._trame_server = trame_server
+        self._pending_shared_sync_views = {}
         if HAS_VTK_WEB:
             self._vtk_core = vtkWebApplication()
             self._vtk_core.SetImageEncoding(0)
@@ -184,7 +185,40 @@ class Helper:
         )
 
         # Remote rendering - geometry delivery
-        self._root_protocol.registerLinkProtocol(vtkWebLocalRendering())
+        self._local_rendering_protocol = vtkWebLocalRendering()
+        self._root_protocol.registerLinkProtocol(self._local_rendering_protocol)
+
+        # Flush any shared sync views registered before protocol was ready
+        for view_id, widget in self._pending_shared_sync_views.items():
+            self._local_rendering_protocol.register_shared_sync_view(view_id, widget)
+        self._pending_shared_sync_views.clear()
+
+    def get_array_content(self, data_hash, binary=True):
+        """Get array content directly from sync context (no RPC overhead).
+
+        Args:
+            data_hash: The hash of the array to retrieve
+            binary: If True (default), return raw bytes. If False, return base64 string.
+        """
+        if hasattr(self, '_local_rendering_protocol'):
+            try:
+                return self._local_rendering_protocol.context.get_cached_data_array(data_hash, binary)
+            except KeyError:
+                return None
+        return None
+
+    def register_shared_sync_view(self, view_id, widget):
+        """Register a VtkSharedSyncView for RPC-based resync."""
+        if hasattr(self, '_local_rendering_protocol'):
+            self._local_rendering_protocol.register_shared_sync_view(view_id, widget)
+        else:
+            self._pending_shared_sync_views[view_id] = widget
+
+    def unregister_shared_sync_view(self, view_id):
+        """Unregister a VtkSharedSyncView."""
+        self._pending_shared_sync_views.pop(view_id, None)
+        if hasattr(self, '_local_rendering_protocol'):
+            self._local_rendering_protocol.unregister_shared_sync_view(view_id)
 
     def add_hybrid_view(
         self,

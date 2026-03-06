@@ -16,11 +16,13 @@ from .common import (
     VtkShareDataset,
     VtkWebXRHelper,
 )
+from .shared_sync_view import VtkSharedSyncView
 
 __all__ = [
     "VtkView",
     "VtkRemoteView",
     "VtkLocalView",
+    "VtkSharedSyncView",
     "VtkRemoteLocalView",
     "VtkAlgorithm",
     "VtkCellData",

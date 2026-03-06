@@ -600,7 +600,15 @@ class VtkRemoteLocalView(HtmlElement):
             parallelProjection=camera.GetParallelProjection(),
             parallelScale=camera.GetParallelScale(),
             viewAngle=camera.GetViewAngle(),
+            windowCenter=camera.GetWindowCenter(),
+            clippingRange=camera.GetClippingRange(),
         )
+
+        if camera.GetUseExplicitProjectionTransformMatrix():
+            m = camera.GetExplicitProjectionTransformMatrix()
+            camera_params["projectionMatrix"] = [
+                m.GetElement(j, i) for i in range(4) for j in range(4)
+            ]
 
         if center_of_rotation is not None:
             camera_params["centerOfRotation"] = center_of_rotation
@@ -1021,7 +1029,15 @@ class VtkLocalView(HtmlElement):
             parallelProjection=camera.GetParallelProjection(),
             parallelScale=camera.GetParallelScale(),
             viewAngle=camera.GetViewAngle(),
+            windowCenter=camera.GetWindowCenter(),
+            clippingRange=camera.GetClippingRange(),
         )
+
+        if camera.GetUseExplicitProjectionTransformMatrix():
+            m = camera.GetExplicitProjectionTransformMatrix()
+            camera_params["projectionMatrix"] = [
+                m.GetElement(j, i) for i in range(4) for j in range(4)
+            ]
 
         if center_of_rotation is not None:
             camera_params["centerOfRotation"] = center_of_rotation
